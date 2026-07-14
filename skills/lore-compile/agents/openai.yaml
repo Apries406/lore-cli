@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lore 知识编译"
+  short_description: "将 Raw Snapshot 安全编译为可追溯的 Wiki 知识"
+  default_prompt: "使用 $lore-compile 将这个来源编译进 Lore 知识库，并在应用前展示 diff。"
