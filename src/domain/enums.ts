@@ -51,6 +51,8 @@ export enum VaultFileName {
 /** 原始来源类型；当前采集器只实现了本地文件。 */
 export enum SourceKind {
   File = "file",
+  Text = "text",
+  Directory = "directory",
   Web = "web",
   LarkDocument = "lark_doc",
   LarkChat = "lark_chat",
@@ -68,6 +70,12 @@ export enum SourceStatus {
 export enum SyncPolicy {
   Manual = "manual",
   Scheduled = "scheduled",
+}
+
+/** Source 生命周期变更动作。 */
+export enum SourceLifecycleAction {
+  Tombstone = "tombstone",
+  Restore = "restore",
 }
 
 /** Lore Profile 约束的 Wiki 页面类型。OKF 读取端仍应宽容未知类型。 */

@@ -96,7 +96,10 @@ describe("Vault 协议迁移", () => {
       new Date("2026-07-14T13:30:00.000Z"),
     );
 
-    expect(result.record).toMatchObject({ from_version: 1, to_version: 2 });
+    expect(result.record).toMatchObject({
+      from_version: 1,
+      to_version: SCHEMA_VERSION,
+    });
     await expect(assertVaultCompatible(fixture.root)).resolves.toBeUndefined();
     const config = await readYamlFile<VaultConfig>(
       path.join(fixture.root, VaultFileName.Config),

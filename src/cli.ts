@@ -9,6 +9,7 @@ import {
   OutputFormat,
   RawFallbackMode,
   SourceKind,
+  SourceLifecycleAction,
 } from "./domain/enums.js";
 import { asLoreError } from "./errors.js";
 import { findVaultRoot } from "./infrastructure/filesystem.js";
@@ -16,9 +17,12 @@ import { parseYaml } from "./infrastructure/serialization.js";
 import { Reporter } from "./output/reporter.js";
 import {
   addSource,
+  getSourceHistory,
+  getSourceImpact,
   listSources,
   showSource,
   syncSource,
+  updateSourceLifecycle,
 } from "./services/source-service.js";
 import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
@@ -50,6 +54,7 @@ interface GlobalOptions {
 interface SourceAddOptions {
   kind: SourceKind;
   title?: string;
+  revision?: string;
 }
 
 interface CompilePrepareOptions {
@@ -188,6 +193,7 @@ function createProgram(): Command {
         .default(SourceKind.File),
     )
     .option("--title <title>", "来源展示标题")
+    .option("--revision <revision>", "Git diff 的 base revision")
     .action(async (input: string, options: SourceAddOptions) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
@@ -195,6 +201,23 @@ function createProgram(): Command {
       reporter.sourceAdded(
         await addSource(root, input, {
           kind: options.kind,
+          ...(options.title ? { title: options.title } : {}),
+          ...(options.revision ? { revision: options.revision } : {}),
+        }),
+      );
+    });
+
+  source
+    .command("add-text")
+    .description("采集一段直接文本")
+    .argument("<text>", "需要保存的原始文本")
+    .option("--title <title>", "来源展示标题")
+    .action(async (text: string, options: { title?: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.sourceAdded(
+        await addSource(await resolveVaultRoot(globalOptions), text, {
+          kind: SourceKind.Text,
           ...(options.title ? { title: options.title } : {}),
         }),
       );
@@ -413,6 +436,62 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await showSource(await resolveVaultRoot(globalOptions), sourceId),
+      );
+    });
+
+  source
+    .command("history")
+    .description("显示 Source 的 Snapshot 与编译历史")
+    .argument("<source-id>", "稳定的来源 ID")
+    .action(async (sourceId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getSourceHistory(await resolveVaultRoot(globalOptions), sourceId),
+      );
+    });
+
+  source
+    .command("impact")
+    .description("显示 Source 影响的 Wiki 页面与编译任务")
+    .argument("<source-id>", "稳定的来源 ID")
+    .action(async (sourceId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getSourceImpact(await resolveVaultRoot(globalOptions), sourceId),
+      );
+    });
+
+  source
+    .command("tombstone")
+    .description("逻辑删除 Source，同时保留 Snapshot 和知识影响")
+    .argument("<source-id>", "稳定的来源 ID")
+    .action(async (sourceId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await updateSourceLifecycle(
+          await resolveVaultRoot(globalOptions),
+          sourceId,
+          SourceLifecycleAction.Tombstone,
+        ),
+      );
+    });
+
+  source
+    .command("restore")
+    .description("恢复被逻辑删除的 Source")
+    .argument("<source-id>", "稳定的来源 ID")
+    .action(async (sourceId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await updateSourceLifecycle(
+          await resolveVaultRoot(globalOptions),
+          sourceId,
+          SourceLifecycleAction.Restore,
+        ),
       );
     });
 

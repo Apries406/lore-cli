@@ -1,7 +1,7 @@
 /** 当前 CLI 与采集器版本。 */
 export const LORE_VERSION = "0.1.0";
 /** 当前 Lore 元数据结构版本。 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 /** 当前生成与校验的 OKF 规范版本。 */
 export const OKF_VERSION = "0.1";
 /** 所有内容摘要统一使用 SHA-256，避免不同模块产生不兼容的 ID。 */
@@ -51,6 +51,16 @@ export const DEFAULT_SOURCE_STALE_AFTER_DAYS = 90;
 export const DEFAULT_RUN_STALE_AFTER_HOURS = 24;
 export const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 export const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
+/** 单个采集结果的默认最大字节数，防止意外吞入巨型文件或响应。 */
+export const DEFAULT_MAX_SOURCE_BYTES = 10 * 1024 * 1024;
+/** 目录与 Git Snapshot 最多包含的文本文件数。 */
+export const DEFAULT_MAX_SOURCE_FILES = 1000;
+/** 单个目录/Git 文件的最大字节数。 */
+export const DEFAULT_MAX_COLLECTED_FILE_BYTES = 1024 * 1024;
+/** Web 采集超时时间。 */
+export const DEFAULT_WEB_TIMEOUT_MILLISECONDS = 30 * 1000;
+/** Git diff 默认上下文行数。 */
+export const DEFAULT_GIT_DIFF_CONTEXT_LINES = 3;
 /** Wiki 页面相对路径必须位于 pages/ 且使用稳定英文 slug。 */
 export const WIKI_PAGE_PATH_PATTERN = "^wiki/pages/[a-z0-9][a-z0-9-]*\\.md$";
 /** 第一版 Evidence 使用不可变 Snapshot 中的 1-based 行区间。 */

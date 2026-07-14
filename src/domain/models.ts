@@ -6,6 +6,7 @@ import type {
   SyncPolicy,
   ValidationSeverity,
 } from "./enums.js";
+import type { CompilationRecord } from "./compile-models.js";
 
 /** 根目录 lore.yaml 的结构。字段名属于持久化协议。 */
 export interface VaultConfig {
@@ -56,6 +57,24 @@ export interface AddSourceResult {
   snapshot: SnapshotManifest;
   source_created: boolean;
   snapshot_created: boolean;
+}
+
+/** Source 的 Snapshot 与编译记录历史。 */
+export interface SourceHistory {
+  source: SourceMetadata;
+  latest: LatestSnapshotPointer;
+  snapshots: SnapshotManifest[];
+  compilations: CompilationRecord[];
+}
+
+/** Source 对 Wiki 页面和编译账本的可追溯影响。 */
+export interface SourceImpact {
+  source_id: string;
+  wiki_pages: Array<{
+    path: string;
+    evidence_ids: string[];
+  }>;
+  compilation_runs: string[];
 }
 
 /** 单条机器可读校验诊断。 */

@@ -91,6 +91,39 @@ describe("Lore CLI", () => {
       },
     });
 
+    expect(
+      JSON.parse(
+        runCli([
+          "--json",
+          "--root",
+          vault,
+          "source",
+          "history",
+          addedEnvelope.data.source.source_id,
+        ]).stdout,
+      ),
+    ).toMatchObject({ data: { snapshots: [{ snapshot_id: expect.any(String) }] } });
+    expect(
+      runCli([
+        "--json",
+        "--root",
+        vault,
+        "source",
+        "tombstone",
+        addedEnvelope.data.source.source_id,
+      ]).status,
+    ).toBe(0);
+    expect(
+      runCli([
+        "--json",
+        "--root",
+        vault,
+        "source",
+        "restore",
+        addedEnvelope.data.source.source_id,
+      ]).status,
+    ).toBe(0);
+
     const status = runCli(["--json", "--root", vault, "status"]);
     expect(status.status).toBe(0);
     expect(JSON.parse(status.stdout)).toMatchObject({

@@ -106,7 +106,7 @@ function mergeProfile(
   return merged;
 }
 
-/** 为旧页面补齐 v2 强制要求的 quote_sha256 与 schema_version。 */
+/** 为旧页面补齐当前版本强制要求的 quote_sha256 与 schema_version。 */
 async function upgradePage(root: string, page: WikiPage): Promise<PageUpgrade | undefined> {
   const loreValue = page.frontmatter.lore;
   if (!isRecord(loreValue)) {
@@ -199,7 +199,7 @@ export async function getMigrationPlan(root: string): Promise<MigrationPlan> {
       actions: [],
     };
   }
-  if (config.version !== 1 || SCHEMA_VERSION !== 2) {
+  if (![1, 2].includes(config.version) || SCHEMA_VERSION !== 3) {
     throw new LoreError(
       ErrorCode.UnsupportedVaultVersion,
       `没有从 Vault v${config.version} 到 v${SCHEMA_VERSION} 的迁移路径`,
@@ -320,7 +320,7 @@ async function withMigrationLock<T>(root: string, action: () => Promise<T>): Pro
   }
 }
 
-/** 事务应用 v1 → v2 迁移，失败时恢复所有被写入文件。 */
+/** 事务应用旧版到当前版本的迁移，失败时恢复所有被写入文件。 */
 export async function applyMigration(
   root: string,
   now: Date = new Date(),
