@@ -22,6 +22,7 @@ import {
   listSources,
   showSource,
   syncSource,
+  SUPPORTED_SOURCE_KINDS,
   updateSourceLifecycle,
 } from "./services/source-service.js";
 import { getVaultStatus } from "./services/status-service.js";
@@ -29,6 +30,14 @@ import { validateVault } from "./services/validation-service.js";
 import { initializeVault } from "./services/vault-service.js";
 import { auditVault } from "./services/audit-service.js";
 import { withdrawSource } from "./services/source-impact-service.js";
+import {
+  installBundledSkills,
+  listBundledSkills,
+} from "./services/skill-service.js";
+import {
+  getRecoveryStatus,
+  recoverVault,
+} from "./services/mutation-service.js";
 import {
   applyMigration,
   assertVaultCompatible,
@@ -56,6 +65,7 @@ interface SourceAddOptions {
   kind: SourceKind;
   title?: string;
   revision?: string;
+  allowSensitive?: boolean;
 }
 
 interface CompilePrepareOptions {
@@ -80,6 +90,11 @@ interface QueryPrepareOptions {
   fallback: RawFallbackMode;
   wikiLimit?: string;
   rawLimit?: string;
+}
+
+interface SkillInstallOptions {
+  target?: string;
+  force?: boolean;
 }
 
 /** 将可选的正整数 CLI 参数转成查询服务参数。 */
@@ -144,6 +159,32 @@ function createProgram(): Command {
       reporter.initialized(await initializeVault(targetPath));
     });
 
+  const skill = program.command("skill").description("查看和安装 Lore Skills");
+
+  skill
+    .command("list")
+    .description("列出 npm 包内置 Skills")
+    .action(async () => {
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      reporter.data(await listBundledSkills());
+    });
+
+  skill
+    .command("install")
+    .description("安装一个或全部内置 Skill 到 Codex")
+    .argument("[names...]", "Skill 名称；省略时安装全部")
+    .option("--target <path>", "安装目录；默认 $CODEX_HOME/skills")
+    .option("--force", "覆盖已存在的 Skill")
+    .action(async (names: string[], options: SkillInstallOptions) => {
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      reporter.data(
+        await installBundledSkills(names, {
+          ...(options.target ? { target: options.target } : {}),
+          force: options.force === true,
+        }),
+      );
+    });
+
   const migrate = program
     .command("migrate")
     .description("检查并升级旧版 Lore Vault");
@@ -157,6 +198,30 @@ function createProgram(): Command {
       reporter.data(
         await getMigrationPlan(await locateVaultRoot(globalOptions)),
       );
+    });
+
+  const recover = program
+    .command("recover")
+    .description("检查并恢复进程中断留下的 Vault 事务");
+
+  recover
+    .command("status")
+    .description("只读显示写锁和待恢复事务")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getRecoveryStatus(await locateVaultRoot(globalOptions)),
+      );
+    });
+
+  recover
+    .command("apply")
+    .description("从事务备份恢复并清理死亡进程写锁")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(await recoverVault(await locateVaultRoot(globalOptions)));
     });
 
   migrate
@@ -191,11 +256,12 @@ function createProgram(): Command {
     .argument("<input>", "来源路径或 URI")
     .addOption(
       new Option("--kind <kind>", "来源类型")
-        .choices(Object.values(SourceKind))
+        .choices([...SUPPORTED_SOURCE_KINDS])
         .default(SourceKind.File),
     )
     .option("--title <title>", "来源展示标题")
     .option("--revision <revision>", "Git diff 的 base revision")
+    .option("--allow-sensitive", "确认并允许采集检测到的敏感凭证")
     .action(async (input: string, options: SourceAddOptions) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
@@ -205,6 +271,7 @@ function createProgram(): Command {
           kind: options.kind,
           ...(options.title ? { title: options.title } : {}),
           ...(options.revision ? { revision: options.revision } : {}),
+          allow_sensitive: options.allowSensitive === true,
         }),
       );
     });
@@ -214,13 +281,18 @@ function createProgram(): Command {
     .description("采集一段直接文本")
     .argument("<text>", "需要保存的原始文本")
     .option("--title <title>", "来源展示标题")
-    .action(async (text: string, options: { title?: string }) => {
+    .option("--allow-sensitive", "确认并允许采集检测到的敏感凭证")
+    .action(async (
+      text: string,
+      options: { title?: string; allowSensitive?: boolean },
+    ) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.sourceAdded(
         await addSource(await resolveVaultRoot(globalOptions), text, {
           kind: SourceKind.Text,
           ...(options.title ? { title: options.title } : {}),
+          allow_sensitive: options.allowSensitive === true,
         }),
       );
     });

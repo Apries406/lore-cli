@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { Ajv, type ErrorObject } from "ajv";
 import addFormatsModule from "ajv-formats";
@@ -31,6 +31,8 @@ import {
   KnowledgeStatus,
   MediaType,
   MergeStrategy,
+  MutationOperation,
+  TransactionStatus,
   VaultFileName,
   WikiPageType,
 } from "../domain/enums.js";
@@ -47,6 +49,12 @@ import {
   writeYamlFile,
 } from "../infrastructure/serialization.js";
 import { readSourceSnapshot } from "./source-service.js";
+import {
+  acquireMutationLock,
+  prepareTransaction,
+  restorePreparedTransaction,
+  updateTransactionStatus,
+} from "./mutation-service.js";
 import { validateVault } from "./validation-service.js";
 import {
   findCompileCandidates,
@@ -613,52 +621,33 @@ export async function readCompileDiff(root: string, runId: string): Promise<stri
 }
 
 /** 获取独占应用锁，防止两个进程同时修改 Wiki。 */
-async function withCompileLock<T>(root: string, action: () => Promise<T>): Promise<T> {
-  const migrationLock = safeJoin(
+async function withCompileLock<T>(
+  root: string,
+  subject: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const lock = await acquireMutationLock(
     root,
-    DirectoryName.Runtime,
-    VaultFileName.MigrationLock,
+    MutationOperation.CompileApply,
+    subject,
   );
-  if (await pathExists(migrationLock)) {
-    throw new LoreError(
-      ErrorCode.MigrationFailed,
-      "Vault 正在迁移，不能同时应用知识编译",
-      ExitCode.Conflict,
-    );
-  }
-  const lockPath = safeJoin(root, DirectoryName.Runtime, VaultFileName.CompileLock);
-  let handle;
-  try {
-    handle = await open(lockPath, "wx");
-    await handle.writeFile(`${process.pid}\n`, TEXT_ENCODING);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new LoreError(
-        ErrorCode.CompileLockHeld,
-        "另一个知识编译任务正在应用变更",
-        ExitCode.Conflict,
-      );
-    }
-    throw error;
-  }
   try {
     return await action();
   } finally {
-    await handle.close();
-    await rm(lockPath, { force: true });
+    await lock.release();
   }
 }
 
 /** 将目标文件备份到任务目录；不存在的 create 目标无需创建空备份。 */
-async function backupFile(
+async function backupFileTo(
   root: string,
-  runId: string,
+  backupRoot: string,
   relativePath: string,
 ): Promise<void> {
   const sourcePath = safeJoin(root, relativePath);
   if (await pathExists(sourcePath)) {
     await atomicWriteFile(
-      safeJoin(runDirectory(root, runId), DirectoryName.Backup, relativePath),
+      safeJoin(backupRoot, relativePath),
       await readFile(sourcePath),
     );
   }
@@ -724,7 +713,7 @@ export async function applyCompile(
   runId: string,
   now: Date = new Date(),
 ): Promise<ApplyCompileResult> {
-  return withCompileLock(root, async () => {
+  return withCompileLock(root, `apply:${runId}`, async () => {
     let run = await getCompileRun(root, runId);
     if (run.status !== CompileRunStatus.Validated) {
       throw new LoreError(
@@ -754,13 +743,34 @@ export async function applyCompile(
 
     const indexPath = `${DirectoryName.Wiki}/${VaultFileName.Index}`;
     const logPath = `${DirectoryName.Wiki}/${VaultFileName.Log}`;
-    for (const relativePath of [
+    const runPath = `${DirectoryName.Runtime}/${DirectoryName.Runs}/${runId}/${VaultFileName.CompileRun}`;
+    const recordPath = `${DirectoryName.Raw}/${DirectoryName.Sources}/${run.source_id}/${DirectoryName.Compilations}/${run.snapshot_id}/${runId}.yaml`;
+    const changedFiles = [...new Set([
       ...proposal.changes.map((item) => item.target.path),
       indexPath,
       logPath,
-    ]) {
-      await backupFile(root, runId, relativePath);
+      runPath,
+      recordPath,
+    ])].sort();
+    const backupRoot = safeJoin(runDirectory(root, runId), DirectoryName.Backup);
+    for (const relativePath of changedFiles) {
+      await backupFileTo(root, backupRoot, relativePath);
     }
+    const journalPath = safeJoin(
+      runDirectory(root, runId),
+      VaultFileName.TransactionJournal,
+    );
+    const journal = await prepareTransaction(
+      journalPath,
+      {
+        transaction_id: `apply_${runId}`,
+        operation: MutationOperation.CompileApply,
+        subject: `apply:${runId}`,
+        backup_root: path.relative(root, backupRoot).split(path.sep).join("/"),
+        changed_files: changedFiles,
+      },
+      now,
+    );
 
     let mutated = false;
     try {
@@ -831,11 +841,13 @@ export async function applyCompile(
         run,
       );
       await writeCompilationRecord(root, record);
+      await updateTransactionStatus(journalPath, TransactionStatus.Committed, now);
       return { run, record };
     } catch (error) {
       if (mutated) {
-        await restoreBackup(root, runId, proposal);
+        await restorePreparedTransaction(root, journal);
       }
+      await updateTransactionStatus(journalPath, TransactionStatus.Recovered, now);
       const status =
         error instanceof LoreError && error.code === ErrorCode.Conflict
           ? CompileRunStatus.Conflict
@@ -861,7 +873,7 @@ export async function rollbackCompile(
   runId: string,
   now: Date = new Date(),
 ): Promise<ApplyCompileResult> {
-  return withCompileLock(root, async () => {
+  return withCompileLock(root, `rollback:${runId}`, async () => {
     let run = await getCompileRun(root, runId);
     if (run.status !== CompileRunStatus.Applied) {
       throw new LoreError(
@@ -909,22 +921,71 @@ export async function rollbackCompile(
       }
     }
 
-    await restoreBackup(root, runId, proposal);
-    const validation = await validateVault(root);
-    if (!validation.valid) {
-      throw new LoreError(
-        ErrorCode.ValidationFailed,
-        `回滚后的知识库校验失败：${validation.errors} 个错误`,
-        ExitCode.ValidationFailed,
-        validation,
-      );
+    const indexPath = `${DirectoryName.Wiki}/${VaultFileName.Index}`;
+    const logPath = `${DirectoryName.Wiki}/${VaultFileName.Log}`;
+    const runPath = `${DirectoryName.Runtime}/${DirectoryName.Runs}/${runId}/${VaultFileName.CompileRun}`;
+    const recordRelativePath = `${DirectoryName.Raw}/${DirectoryName.Sources}/${run.source_id}/${DirectoryName.Compilations}/${run.snapshot_id}/${runId}.yaml`;
+    const changedFiles = [...new Set([
+      ...proposal.changes.map((item) => item.target.path),
+      indexPath,
+      logPath,
+      runPath,
+      recordRelativePath,
+    ])].sort();
+    const rollbackBackupRoot = safeJoin(
+      runDirectory(root, runId),
+      DirectoryName.RollbackBackup,
+    );
+    await rm(rollbackBackupRoot, { recursive: true, force: true });
+    await ensureDirectory(rollbackBackupRoot);
+    for (const relativePath of changedFiles) {
+      await backupFileTo(root, rollbackBackupRoot, relativePath);
     }
-    const rolledBackRecord: CompilationRecord = {
-      ...record,
-      status: CompileRunStatus.RolledBack,
-    };
-    await writeCompilationRecord(root, rolledBackRecord);
-    run = await saveRun(root, run, CompileRunStatus.RolledBack, now);
-    return { run, record: rolledBackRecord };
+    const journalPath = safeJoin(
+      runDirectory(root, runId),
+      VaultFileName.TransactionJournal,
+    );
+    const journal = await prepareTransaction(
+      journalPath,
+      {
+        transaction_id: `rollback_${runId}`,
+        operation: MutationOperation.CompileApply,
+        subject: `rollback:${runId}`,
+        backup_root: path
+          .relative(root, rollbackBackupRoot)
+          .split(path.sep)
+          .join("/"),
+        changed_files: changedFiles,
+      },
+      now,
+    );
+    let mutated = false;
+    try {
+      mutated = true;
+      await restoreBackup(root, runId, proposal);
+      const validation = await validateVault(root);
+      if (!validation.valid) {
+        throw new LoreError(
+          ErrorCode.ValidationFailed,
+          `回滚后的知识库校验失败：${validation.errors} 个错误`,
+          ExitCode.ValidationFailed,
+          validation,
+        );
+      }
+      const rolledBackRecord: CompilationRecord = {
+        ...record,
+        status: CompileRunStatus.RolledBack,
+      };
+      await writeCompilationRecord(root, rolledBackRecord);
+      run = await saveRun(root, run, CompileRunStatus.RolledBack, now);
+      await updateTransactionStatus(journalPath, TransactionStatus.Committed, now);
+      return { run, record: rolledBackRecord };
+    } catch (error) {
+      if (mutated) {
+        await restorePreparedTransaction(root, journal);
+      }
+      await updateTransactionStatus(journalPath, TransactionStatus.Recovered, now);
+      throw error;
+    }
   });
 }

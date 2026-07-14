@@ -6,10 +6,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DirectoryName,
+  ErrorCode,
   SourceKind,
   SourceLifecycleAction,
   SourceStatus,
+  TransactionStatus,
+  VaultFileName,
 } from "../src/domain/enums.js";
+import { LoreError } from "../src/errors.js";
+import { readYamlFile } from "../src/infrastructure/serialization.js";
+import type { TransactionJournal } from "../src/domain/mutation-models.js";
 import {
   addSource,
   getSourceHistory,
@@ -68,6 +75,19 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
       title: "临时想法",
       status: SourceStatus.Active,
     });
+    const sourceJournal = await readYamlFile<TransactionJournal>(
+      path.join(
+        root,
+        DirectoryName.Runtime,
+        DirectoryName.SourceTransactions,
+        `source_${added.source.source_id}_${added.snapshot.snapshot_id}`,
+        VaultFileName.TransactionJournal,
+      ),
+    );
+    expect(sourceJournal.status).toBe(TransactionStatus.Committed);
+    expect(sourceJournal.changed_files).toContain(
+      `raw/sources/${added.source.source_id}/latest.yaml`,
+    );
     expect((await readSourceSnapshot(root, added.source.source_id)).content.toString()).toBe(
       "一段直接输入的知识。",
     );
@@ -153,7 +173,12 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
     git("config", "user.name", "Lore Test");
     git("config", "user.email", "lore@example.test");
     await writeFile(path.join(repository, "README.md"), "# 第一版\n", "utf8");
-    git("add", "README.md");
+    await writeFile(
+      path.join(repository, ".env"),
+      "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz1234567890\n",
+      "utf8",
+    );
+    git("add", "README.md", ".env");
     git("commit", "-q", "-m", "first");
     await writeFile(path.join(repository, "README.md"), "# 第二版\n", "utf8");
     git("add", "README.md");
@@ -167,6 +192,7 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
     ).content.toString();
     expect(repositoryContent).toContain("HEAD:");
     expect(repositoryContent).toContain("# 第二版");
+    expect(repositoryContent).not.toContain("OPENAI_API_KEY");
 
     const diffSource = await addSource(root, repository, {
       kind: SourceKind.GitDiff,
@@ -227,5 +253,28 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
       ],
       compilation_runs: [],
     });
+  });
+
+  it("默认拒绝 .loreignore 路径与高置信度敏感凭证", async () => {
+    const root = await createVault();
+    const inputRoot = await temporaryDirectory("lore-adapter-sensitive-");
+    const ignoredPath = path.join(inputRoot, ".env");
+    await writeFile(ignoredPath, "SAFE_EXAMPLE=value\n", "utf8");
+    await expect(addSource(root, ignoredPath)).rejects.toMatchObject<Partial<LoreError>>({
+      code: ErrorCode.IgnoredSource,
+    });
+
+    const privateKeyPath = path.join(inputRoot, "private-key.txt");
+    await writeFile(
+      privateKeyPath,
+      "-----BEGIN PRIVATE KEY-----\n测试占位内容\n-----END PRIVATE KEY-----\n",
+      "utf8",
+    );
+    await expect(addSource(root, privateKeyPath)).rejects.toMatchObject<
+      Partial<LoreError>
+    >({ code: ErrorCode.SensitiveContentDetected });
+    await expect(
+      addSource(root, privateKeyPath, { allow_sensitive: true }),
+    ).resolves.toMatchObject({ snapshot_created: true });
   });
 });

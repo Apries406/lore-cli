@@ -1,5 +1,5 @@
 /** 当前 CLI 与采集器版本。 */
-export const LORE_VERSION = "0.1.0";
+export const LORE_VERSION = "0.2.0";
 /** 当前 Lore 元数据结构版本。 */
 export const SCHEMA_VERSION = 4;
 /** 当前生成与校验的 OKF 规范版本。 */

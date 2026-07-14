@@ -4,7 +4,9 @@ import {
   readFile,
   readdir,
   realpath,
+  rm,
   stat,
+  lstat,
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,10 +27,13 @@ import {
   ErrorCode,
   ExitCode,
   MediaType,
+  MutationOperation,
   SourceKind,
   SourceLifecycleAction,
+  SensitiveContentKind,
   SourceStatus,
   SyncPolicy,
+  TransactionStatus,
   VaultFileName,
 } from "../domain/enums.js";
 import type {
@@ -43,6 +48,7 @@ import { LoreError } from "../errors.js";
 import {
   atomicWriteFile,
   canonicalFilePath,
+  assertPathWithinRoot,
   ensureDirectory,
   pathExists,
   safeJoin,
@@ -51,8 +57,25 @@ import { createSnapshotId, createSourceId, sha256 } from "../infrastructure/hash
 import { readYamlFile, writeYamlFile } from "../infrastructure/serialization.js";
 import { walkFiles } from "../infrastructure/walk.js";
 import { listWikiPages } from "./wiki-service.js";
+import {
+  acquireMutationLock,
+  prepareTransaction,
+  restorePreparedTransaction,
+  updateTransactionStatus,
+} from "./mutation-service.js";
 
 const execFileAsync = promisify(execFile);
+
+/** 当前版本可实际采集的来源类型；协议预留值不会出现在 CLI 选项中。 */
+export const SUPPORTED_SOURCE_KINDS: readonly SourceKind[] = [
+  SourceKind.File,
+  SourceKind.Text,
+  SourceKind.Directory,
+  SourceKind.Web,
+  SourceKind.LarkDocument,
+  SourceKind.GitRepository,
+  SourceKind.GitDiff,
+];
 
 const MEDIA_TYPE_BY_EXTENSION: Readonly<Record<string, MediaType>> = {
   ".md": MediaType.Markdown,
@@ -108,11 +131,66 @@ interface CollectedSource {
   collector: string;
 }
 
+/**
+ * 在统一写锁内执行来源事务。
+ * 事务先备份所有既有目标并写 Prepared 日志；失败时恢复事务前状态。
+ */
+async function runSourceTransaction<T>(
+  root: string,
+  transactionId: string,
+  subject: string,
+  targetPaths: string[],
+  action: () => Promise<T>,
+): Promise<T> {
+  const transactionRoot = safeJoin(
+    root,
+    DirectoryName.Runtime,
+    DirectoryName.SourceTransactions,
+    transactionId,
+  );
+  const backupRoot = safeJoin(transactionRoot, DirectoryName.Backup);
+  const journalPath = safeJoin(transactionRoot, VaultFileName.TransactionJournal);
+  const changedFiles = [...new Set(targetPaths.map((targetPath) => {
+    assertPathWithinRoot(root, targetPath);
+    return path.relative(root, targetPath);
+  }))].sort();
+
+  // 同一个内容寻址事务可重复执行；每次都必须从当前状态重新建立备份。
+  await rm(transactionRoot, { recursive: true, force: true });
+  await ensureDirectory(backupRoot);
+  for (const relativePath of changedFiles) {
+    const targetPath = safeJoin(root, relativePath);
+    if (await pathExists(targetPath)) {
+      await atomicWriteFile(
+        safeJoin(backupRoot, relativePath),
+        await readFile(targetPath),
+      );
+    }
+  }
+  const journal = await prepareTransaction(journalPath, {
+    transaction_id: transactionId,
+    operation: MutationOperation.SourceUpdate,
+    subject,
+    backup_root: path.relative(root, backupRoot),
+    changed_files: changedFiles,
+  });
+  try {
+    const result = await action();
+    await updateTransactionStatus(journalPath, TransactionStatus.Committed);
+    return result;
+  } catch (error) {
+    await restorePreparedTransaction(root, journal);
+    await updateTransactionStatus(journalPath, TransactionStatus.Recovered);
+    throw error;
+  }
+}
+
 /** `source add` 的可选参数；now 仅用于测试和可复现任务。 */
 export interface AddSourceOptions {
   kind?: SourceKind;
   title?: string;
   revision?: string;
+  allow_sensitive?: boolean;
   now?: Date;
 }
 
@@ -142,6 +220,25 @@ function assertSourceSize(content: Buffer, label: string): void {
 /** 判断 Buffer 是否像文本；NUL 字节通常表示二进制内容。 */
 function isProbablyText(content: Buffer): boolean {
   return !content.includes(0);
+}
+
+/** 只匹配高置信度凭证格式，避免用宽泛 `token=` 规则阻塞正常代码。 */
+function detectSensitiveContent(content: Buffer): SensitiveContentKind[] {
+  const text = content.toString(TEXT_ENCODING);
+  const detected = new Set<SensitiveContentKind>();
+  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u.test(text)) {
+    detected.add(SensitiveContentKind.PrivateKey);
+  }
+  if (/\bAKIA[0-9A-Z]{16}\b/u.test(text)) {
+    detected.add(SensitiveContentKind.AwsAccessKey);
+  }
+  if (/\bghp_[A-Za-z0-9]{36,}\b/u.test(text)) {
+    detected.add(SensitiveContentKind.GithubToken);
+  }
+  if (/\bsk-[A-Za-z0-9_-]{32,}\b/u.test(text)) {
+    detected.add(SensitiveContentKind.OpenAiKey);
+  }
+  return [...detected];
 }
 
 /** 获取真实目录路径，同时拒绝普通文件和不存在的路径。 */
@@ -252,8 +349,16 @@ async function renderFilesAsMarkdown(
 }
 
 /** 采集单个本地文件。 */
-async function collectFile(input: string): Promise<CollectedSource> {
+async function collectFile(root: string, input: string): Promise<CollectedSource> {
   const sourcePath = await canonicalFilePath(input);
+  const patterns = await readIgnorePatterns(root, path.dirname(sourcePath));
+  if (isIgnored(path.basename(sourcePath), patterns)) {
+    throw new LoreError(
+      ErrorCode.IgnoredSource,
+      `来源路径被 .loreignore 排除：${path.basename(sourcePath)}`,
+      ExitCode.InvalidArgument,
+    );
+  }
   const content = await readFile(sourcePath);
   assertSourceSize(content, sourcePath);
   const extension = path.extname(sourcePath).toLowerCase() || ".bin";
@@ -383,18 +488,32 @@ async function executeGit(repository: string, arguments_: string[]): Promise<str
 }
 
 /** 采集 Git HEAD 以及全部 tracked 文本文件。 */
-async function collectGitRepository(input: string): Promise<CollectedSource> {
+async function collectGitRepository(
+  root: string,
+  input: string,
+): Promise<CollectedSource> {
   const repository = await canonicalDirectoryPath(input);
   const topLevel = (await executeGit(repository, ["rev-parse", "--show-toplevel"])).trim();
   const canonicalRepository = await realpath(topLevel);
   const head = (await executeGit(canonicalRepository, ["rev-parse", "HEAD"])).trim();
-  const tracked = (await executeGit(canonicalRepository, ["ls-files", "-z"]))
+  const trackedRelativePaths = (await executeGit(canonicalRepository, ["ls-files", "-z"]))
     .split("\0")
-    .filter(Boolean)
-    .map((relativePath) => safeJoin(canonicalRepository, relativePath))
-    .filter((filePath) =>
-      COLLECTED_TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase()),
-    );
+    .filter(Boolean);
+  const patterns = await readIgnorePatterns(root, canonicalRepository);
+  const tracked: string[] = [];
+  for (const relativePath of trackedRelativePaths) {
+    const filePath = path.resolve(canonicalRepository, relativePath);
+    assertPathWithinRoot(canonicalRepository, filePath);
+    const metadata = await lstat(filePath).catch(() => undefined);
+    if (
+      metadata?.isFile() &&
+      !metadata.isSymbolicLink() &&
+      !isIgnored(relativePath, patterns) &&
+      COLLECTED_TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+    ) {
+      tracked.push(filePath);
+    }
+  }
   const content = await renderFilesAsMarkdown(
     canonicalRepository,
     tracked,
@@ -553,7 +672,7 @@ async function collectInput(
   const kind = options.kind ?? SourceKind.File;
   switch (kind) {
     case SourceKind.File:
-      return collectFile(input);
+      return collectFile(root, input);
     case SourceKind.Text:
       return collectText(input);
     case SourceKind.Directory:
@@ -561,7 +680,7 @@ async function collectInput(
     case SourceKind.Web:
       return collectWeb(input);
     case SourceKind.GitRepository:
-      return collectGitRepository(input);
+      return collectGitRepository(root, input);
     case SourceKind.GitDiff:
       return collectGitDiff(input, options.revision);
     case SourceKind.LarkDocument:
@@ -581,6 +700,15 @@ async function persistCollection(
   collected: CollectedSource,
   options: AddSourceOptions,
 ): Promise<AddSourceResult> {
+  const sensitiveContent = detectSensitiveContent(collected.content);
+  if (sensitiveContent.length > 0 && options.allow_sensitive !== true) {
+    throw new LoreError(
+      ErrorCode.SensitiveContentDetected,
+      `采集内容疑似包含敏感凭证（${sensitiveContent.join("、")}）；确认安全后使用 --allow-sensitive`,
+      ExitCode.InvalidArgument,
+      { kinds: sensitiveContent },
+    );
+  }
   const sourceId = createSourceId(collected.kind, collected.canonical_uri);
   const snapshotId = createSnapshotId(collected.content);
   const capturedAt = (options.now ?? new Date()).toISOString();
@@ -601,7 +729,11 @@ async function persistCollection(
     VaultFileName.SnapshotManifest,
   );
   const contentPath = `content${collected.extension}`;
-  await ensureDirectory(snapshotDirectory);
+  const snapshotContentPath = safeJoin(snapshotDirectory, contentPath);
+  const latestSnapshotPath = safeJoin(
+    sourceDirectory,
+    VaultFileName.LatestSnapshot,
+  );
 
   let source: SourceMetadata = {
     version: SCHEMA_VERSION,
@@ -629,7 +761,6 @@ async function persistCollection(
     }
     source = existingSource;
   } else {
-    await writeYamlFile(sourceMetadataPath, source);
     sourceCreated = true;
   }
 
@@ -644,12 +775,10 @@ async function persistCollection(
     collector: collected.collector,
   };
   let snapshotCreated = false;
-  if (!(await pathExists(snapshotManifestPath))) {
-    await atomicWriteFile(safeJoin(snapshotDirectory, contentPath), collected.content);
-    await writeYamlFile(snapshotManifestPath, snapshot);
-    snapshotCreated = true;
-  } else {
+  if (await pathExists(snapshotManifestPath)) {
     snapshot = await readYamlFile<SnapshotManifest>(snapshotManifestPath);
+  } else {
+    snapshotCreated = true;
   }
   const latest: LatestSnapshotPointer = {
     version: SCHEMA_VERSION,
@@ -657,13 +786,34 @@ async function persistCollection(
     snapshot_id: snapshotId,
     updated_at: capturedAt,
   };
-  await writeYamlFile(safeJoin(sourceDirectory, VaultFileName.LatestSnapshot), latest);
-  return {
-    source,
-    snapshot,
-    source_created: sourceCreated,
-    snapshot_created: snapshotCreated,
-  };
+  return runSourceTransaction(
+    root,
+    `source_${sourceId}_${snapshotId}`,
+    sourceId,
+    [
+      sourceMetadataPath,
+      snapshotContentPath,
+      snapshotManifestPath,
+      latestSnapshotPath,
+    ],
+    async () => {
+      await ensureDirectory(snapshotDirectory);
+      if (sourceCreated) {
+        await writeYamlFile(sourceMetadataPath, source);
+      }
+      if (snapshotCreated) {
+        await atomicWriteFile(snapshotContentPath, collected.content);
+        await writeYamlFile(snapshotManifestPath, snapshot);
+      }
+      await writeYamlFile(latestSnapshotPath, latest);
+      return {
+        source,
+        snapshot,
+        source_created: sourceCreated,
+        snapshot_created: snapshotCreated,
+      };
+    },
+  );
 }
 
 /** 采集来源并生成不可变 Snapshot。 */
@@ -672,7 +822,18 @@ export async function addSource(
   input: string,
   options: AddSourceOptions = {},
 ): Promise<AddSourceResult> {
-  return persistCollection(root, await collectInput(root, input, options), options);
+  // 网络、Git 与目录采集可能较慢；只在真正写入 Raw 时占用 Vault 锁。
+  const collected = await collectInput(root, input, options);
+  const lock = await acquireMutationLock(
+    root,
+    MutationOperation.SourceUpdate,
+    `add:${options.kind ?? SourceKind.File}`,
+  );
+  try {
+    return await persistCollection(root, collected, options);
+  } finally {
+    await lock.release();
+  }
 }
 
 /** 读取 Vault 内的全部来源，并按稳定 ID 排序。 */
@@ -771,7 +932,8 @@ export async function syncSource(
   sourceId: string,
   now: Date = new Date(),
 ): Promise<AddSourceResult> {
-  const { source } = await showSource(root, sourceId);
+  const initial = await showSource(root, sourceId);
+  const source = initial.source;
   if (source.status !== SourceStatus.Active) {
     throw new LoreError(
       ErrorCode.Conflict,
@@ -810,28 +972,53 @@ export async function syncSource(
       );
     }
     input = decodeURIComponent(documentId);
-  } else if (source.kind === SourceKind.Text) {
-    const current = await readSourceSnapshot(root, sourceId);
-    return persistCollection(
-      root,
-      {
-        kind: source.kind,
-        canonical_uri: source.canonical_uri,
-        title: source.title,
-        content: current.content,
-        media_type: current.snapshot.media_type as MediaType,
-        extension: path.extname(current.snapshot.content_path) || ".txt",
-        collector: `lore-text@${LORE_VERSION}`,
-      },
-      { kind: source.kind, title: source.title, now },
-    );
   }
-  return addSource(root, input, {
+  const options: AddSourceOptions = {
     kind: source.kind,
     title: source.title,
     ...(revision ? { revision } : {}),
+    allow_sensitive: true,
     now,
-  });
+  };
+  let collected: CollectedSource;
+  if (source.kind === SourceKind.Text) {
+    const current = await readSourceSnapshot(root, sourceId);
+    collected = {
+      kind: source.kind,
+      canonical_uri: source.canonical_uri,
+      title: source.title,
+      content: current.content,
+      media_type: current.snapshot.media_type as MediaType,
+      extension: path.extname(current.snapshot.content_path) || ".txt",
+      collector: `lore-text@${LORE_VERSION}`,
+    };
+  } else {
+    collected = await collectInput(root, input, options);
+  }
+
+  const lock = await acquireMutationLock(
+    root,
+    MutationOperation.SourceUpdate,
+    `sync:${sourceId}`,
+    now,
+  );
+  try {
+    const current = await showSource(root, sourceId);
+    if (
+      current.source.status !== SourceStatus.Active ||
+      current.source.canonical_uri !== source.canonical_uri ||
+      current.latest.snapshot_id !== initial.latest.snapshot_id
+    ) {
+      throw new LoreError(
+        ErrorCode.Conflict,
+        `来源 ${sourceId} 在采集期间发生变化，请重试同步`,
+        ExitCode.Conflict,
+      );
+    }
+    return await persistCollection(root, collected, options);
+  } finally {
+    await lock.release();
+  }
 }
 
 /** 逻辑删除或恢复 Source，不删除任何 Snapshot 与编译账本。 */
@@ -840,23 +1027,38 @@ export async function updateSourceLifecycle(
   sourceId: string,
   action: SourceLifecycleAction,
 ): Promise<SourceMetadata> {
-  const { source } = await showSource(root, sourceId);
-  const status =
-    action === SourceLifecycleAction.Tombstone
-      ? SourceStatus.Tombstoned
-      : SourceStatus.Active;
-  const updated = { ...source, status };
-  await writeYamlFile(
-    safeJoin(
+  const lock = await acquireMutationLock(
+    root,
+    MutationOperation.SourceUpdate,
+    `${action}:${sourceId}`,
+  );
+  try {
+    const { source } = await showSource(root, sourceId);
+    const status =
+      action === SourceLifecycleAction.Tombstone
+        ? SourceStatus.Tombstoned
+        : SourceStatus.Active;
+    const updated = { ...source, status };
+    const sourceMetadataPath = safeJoin(
       root,
       DirectoryName.Raw,
       DirectoryName.Sources,
       sourceId,
       VaultFileName.SourceMetadata,
-    ),
-    updated,
-  );
-  return updated;
+    );
+    return await runSourceTransaction(
+      root,
+      `source_${sourceId}_${action}`,
+      sourceId,
+      [sourceMetadataPath],
+      async () => {
+        await writeYamlFile(sourceMetadataPath, updated);
+        return updated;
+      },
+    );
+  } finally {
+    await lock.release();
+  }
 }
 
 /** 返回 Source 的全部 Snapshot 与编译历史。 */

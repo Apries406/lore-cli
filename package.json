@@ -1,6 +1,6 @@
 {
   "name": "@apries/lore",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "面向人和智能体的本地优先知识编译器。",
   "type": "module",
   "bin": {
@@ -11,16 +11,34 @@
     "README.md",
     "skills"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Apries406/lore-cli.git"
+  },
+  "homepage": "https://github.com/Apries406/lore-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Apries406/lore-cli/issues"
+  },
+  "keywords": [
+    "knowledge-base",
+    "llm",
+    "okf",
+    "cli"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run test && npm run build",
-    "dev": "tsx src/cli.ts"
+    "dev": "tsx src/cli.ts",
+    "prepack": "npm run check"
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "ajv": "^8.17.1",

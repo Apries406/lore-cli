@@ -13,6 +13,7 @@ import {
   KnowledgeOperation,
   KnowledgeStatus,
   SourceStatus,
+  TransactionStatus,
   VaultFileName,
   WikiPageType,
 } from "../src/domain/enums.js";
@@ -140,6 +141,19 @@ describe("Raw 到 Wiki 的知识编译流程", () => {
 
     const applied = await applyCompile(fixture.root, prepared.run.run_id, APPLY_TIME);
     expect(applied.run.status).toBe(CompileRunStatus.Applied);
+    expect(
+      await readYamlFile<{ status: string; transaction_id: string }>(
+        path.join(
+          fixture.root,
+          ".lore/runs",
+          prepared.run.run_id,
+          VaultFileName.TransactionJournal,
+        ),
+      ),
+    ).toMatchObject({
+      status: TransactionStatus.Committed,
+      transaction_id: `apply_${prepared.run.run_id}`,
+    });
     const pagePath = path.join(fixture.root, "wiki/pages/lore-knowledge-model.md");
     const page = await readFile(pagePath, "utf8");
     expect(page).toContain("quote_sha256:");
@@ -174,6 +188,19 @@ describe("Raw 到 Wiki 的知识编译流程", () => {
       new Date("2026-07-14T08:03:00.000Z"),
     );
     expect(rolledBack.run.status).toBe(CompileRunStatus.RolledBack);
+    expect(
+      await readYamlFile<{ status: string; transaction_id: string }>(
+        path.join(
+          fixture.root,
+          ".lore/runs",
+          prepared.run.run_id,
+          VaultFileName.TransactionJournal,
+        ),
+      ),
+    ).toMatchObject({
+      status: TransactionStatus.Committed,
+      transaction_id: `rollback_${prepared.run.run_id}`,
+    });
     expect(await pathExists(pagePath)).toBe(false);
     expect(await readFile(path.join(fixture.root, "wiki/index.md"), "utf8")).toContain(
       "尚未编译任何知识页面",

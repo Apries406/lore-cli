@@ -133,5 +133,8 @@ export class Reporter {
     process.stdout.write(
       `校验：${status.validation.valid ? "有效" : "无效"}（${status.validation.errors} 个错误，${status.validation.warnings} 个警告）\n`,
     );
+    process.stdout.write(
+      `长期健康：${status.audit.healthy ? "健康" : "需要处理"}（${status.audit.errors} 个错误，${status.audit.warnings} 个警告；${status.audit.latest_snapshots_compiled} 个 latest 已编译，${status.audit.incomplete_compile_runs} 个未结束任务）\n`,
+    );
   }
 }

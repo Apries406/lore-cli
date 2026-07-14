@@ -1,40 +1,25 @@
-import path from "node:path";
-import { DirectoryName, VaultFileName } from "../domain/enums.js";
 import type { VaultStatus } from "../domain/models.js";
-import { safeJoin } from "../infrastructure/filesystem.js";
-import { walkFiles } from "../infrastructure/walk.js";
-import { listSources } from "./source-service.js";
-import { validateVault } from "./validation-service.js";
+import { auditVault } from "./audit-service.js";
 
-/** 汇总来源、快照、Wiki 页面数量以及完整校验结果。 */
+/** 汇总基础完整性、长期健康和编译覆盖率。 */
 export async function getVaultStatus(root: string): Promise<VaultStatus> {
-  const sources = await listSources(root);
-  const rawFiles = await walkFiles(
-    safeJoin(root, DirectoryName.Raw, DirectoryName.Sources),
-  );
-  const wikiFiles = await walkFiles(safeJoin(root, DirectoryName.Wiki));
-  const validation = await validateVault(root);
-
-  const snapshots = rawFiles.filter(
-    (filePath) => path.basename(filePath) === VaultFileName.SnapshotManifest,
-  ).length;
-  const wikiPages = wikiFiles.filter((filePath) => {
-    if (path.extname(filePath).toLowerCase() !== ".md") {
-      return false;
-    }
-    const fileName = path.basename(filePath);
-    return fileName !== VaultFileName.Index && fileName !== VaultFileName.Log;
-  }).length;
-
+  const audit = await auditVault(root);
   return {
     root,
-    sources: sources.length,
-    snapshots,
-    wiki_pages: wikiPages,
+    sources: audit.coverage.sources,
+    snapshots: audit.coverage.snapshots,
+    wiki_pages: audit.coverage.wiki_pages,
     validation: {
-      valid: validation.valid,
-      errors: validation.errors,
-      warnings: validation.warnings,
+      valid: audit.validation.valid,
+      errors: audit.validation.errors,
+      warnings: audit.validation.warnings,
+    },
+    audit: {
+      healthy: audit.healthy,
+      errors: audit.errors,
+      warnings: audit.warnings,
+      latest_snapshots_compiled: audit.coverage.latest_snapshots_compiled,
+      incomplete_compile_runs: audit.coverage.incomplete_compile_runs,
     },
   };
 }

@@ -111,6 +111,13 @@ export interface VaultStatus {
     errors: number;
     warnings: number;
   };
+  audit: {
+    healthy: boolean;
+    errors: number;
+    warnings: number;
+    latest_snapshots_compiled: number;
+    incomplete_compile_runs: number;
+  };
 }
 
 /** 一条长期健康审计诊断。 */

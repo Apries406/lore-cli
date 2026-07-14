@@ -525,7 +525,12 @@ async function auditCompileRuns(
   const runsRoot = safeJoin(root, DirectoryName.Runtime, DirectoryName.Runs);
   let incompleteRuns = 0;
   for (const filePath of await walkFiles(runsRoot)) {
-    if (path.basename(filePath) !== VaultFileName.CompileRun) {
+    const relativeSegments = path.relative(runsRoot, filePath).split(path.sep);
+    // 只审计任务根目录下的 run.yaml，忽略事务 backup 中保存的历史副本。
+    if (
+      relativeSegments.length !== 2 ||
+      relativeSegments[1] !== VaultFileName.CompileRun
+    ) {
       continue;
     }
     try {

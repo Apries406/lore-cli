@@ -18,8 +18,10 @@ export enum DirectoryName {
   Runs = "runs",
   Staging = "staging",
   Backup = "backup",
+  RollbackBackup = "rollback-backup",
   Compilations = "compilations",
   Migrations = "migrations",
+  SourceTransactions = "source-transactions",
 }
 
 /** 知识库内具有固定语义的文件名。 */
@@ -44,11 +46,13 @@ export enum VaultFileName {
   CompileDiff = "diff.patch",
   CompileLock = "compile.lock",
   MigrationLock = "migration.lock",
+  MutationLock = "mutation.lock",
+  TransactionJournal = "transaction.yaml",
   CompilationRecord = "compilation.yaml",
   MigrationHistory = "migrations.yaml",
 }
 
-/** 原始来源类型；当前采集器只实现了本地文件。 */
+/** 原始来源类型；尚未实现的类型仍保留为可演进协议值。 */
 export enum SourceKind {
   File = "file",
   Text = "text",
@@ -76,6 +80,14 @@ export enum SyncPolicy {
 export enum SourceLifecycleAction {
   Tombstone = "tombstone",
   Restore = "restore",
+}
+
+/** 采集前高置信度敏感内容分类。 */
+export enum SensitiveContentKind {
+  PrivateKey = "private_key",
+  AwsAccessKey = "aws_access_key",
+  GithubToken = "github_token",
+  OpenAiKey = "openai_key",
 }
 
 /** Lore Profile 约束的 Wiki 页面类型。OKF 读取端仍应宽容未知类型。 */
@@ -240,6 +252,10 @@ export enum ErrorCode {
   MigrationRequired = "migration_required",
   UnsupportedVaultVersion = "unsupported_vault_version",
   MigrationFailed = "migration_failed",
+  SensitiveContentDetected = "sensitive_content_detected",
+  IgnoredSource = "ignored_source",
+  MutationLockHeld = "mutation_lock_held",
+  RecoveryRequired = "recovery_required",
   Internal = "internal",
 }
 
@@ -251,6 +267,20 @@ export enum ExitCode {
   Conflict = 4,
   ValidationFailed = 5,
   Internal = 1,
+}
+
+/** 会修改 Vault 持久状态的互斥操作。 */
+export enum MutationOperation {
+  CompileApply = "compile_apply",
+  Migration = "migration",
+  SourceUpdate = "source_update",
+}
+
+/** 可恢复事务日志状态。 */
+export enum TransactionStatus {
+  Prepared = "prepared",
+  Committed = "committed",
+  Recovered = "recovered",
 }
 
 /** Snapshot 内容的标准 MIME 类型。 */

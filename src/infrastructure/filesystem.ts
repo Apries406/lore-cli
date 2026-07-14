@@ -8,6 +8,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { lstatSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -56,6 +57,26 @@ export function assertPathWithinRoot(root: string, targetPath: string): void {
 export function safeJoin(root: string, ...segments: string[]): string {
   const targetPath = path.resolve(root, ...segments);
   assertPathWithinRoot(root, targetPath);
+  const resolvedRoot = path.resolve(root);
+  const relativePath = path.relative(resolvedRoot, targetPath);
+  let currentPath = resolvedRoot;
+  for (const segment of relativePath.split(path.sep).filter(Boolean)) {
+    currentPath = path.join(currentPath, segment);
+    try {
+      if (lstatSync(currentPath).isSymbolicLink()) {
+        throw new LoreError(
+          ErrorCode.PathEscapesVault,
+          `知识库内部路径不能经过符号链接：${currentPath}`,
+          ExitCode.InvalidArgument,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        break;
+      }
+      throw error;
+    }
+  }
   return targetPath;
 }
 

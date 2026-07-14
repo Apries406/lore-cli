@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   MIGRATION_ID_PREFIX,
@@ -18,6 +18,8 @@ import {
   DirectoryName,
   ErrorCode,
   ExitCode,
+  MutationOperation,
+  TransactionStatus,
   VaultFileName,
 } from "../domain/enums.js";
 import type { VaultConfig } from "../domain/models.js";
@@ -41,6 +43,12 @@ import {
   createSourceSchema,
 } from "../templates/vault.js";
 import { evidenceQuoteSha256 } from "./compile-service.js";
+import {
+  acquireMutationLock,
+  prepareTransaction,
+  restorePreparedTransaction,
+  updateTransactionStatus,
+} from "./mutation-service.js";
 import { readSourceSnapshot } from "./source-service.js";
 import { validateVault } from "./validation-service.js";
 import {
@@ -259,22 +267,6 @@ async function backupFiles(
   }
 }
 
-/** 从迁移备份恢复，迁移前不存在的文件会被删除。 */
-async function restoreFiles(
-  root: string,
-  backupRoot: string,
-  relativePaths: string[],
-): Promise<void> {
-  for (const relativePath of relativePaths) {
-    const backupPath = safeJoin(backupRoot, relativePath);
-    if (await pathExists(backupPath)) {
-      await atomicWriteFile(safeJoin(root, relativePath), await readFile(backupPath));
-    } else {
-      await rm(safeJoin(root, relativePath), { force: true });
-    }
-  }
-}
-
 /** 读取旧历史；v1 没有该文件时返回空历史。 */
 async function readMigrationHistory(root: string): Promise<MigrationHistory> {
   const historyPath = safeJoin(
@@ -289,34 +281,15 @@ async function readMigrationHistory(root: string): Promise<MigrationHistory> {
 
 /** 获取迁移独占锁，并同时拒绝正在 apply 的编译任务。 */
 async function withMigrationLock<T>(root: string, action: () => Promise<T>): Promise<T> {
-  const compileLock = safeJoin(root, DirectoryName.Runtime, VaultFileName.CompileLock);
-  if (await pathExists(compileLock)) {
-    throw new LoreError(
-      ErrorCode.CompileLockHeld,
-      "知识编译正在应用，不能同时迁移 Vault",
-      ExitCode.Conflict,
-    );
-  }
-  const lockPath = safeJoin(root, DirectoryName.Runtime, VaultFileName.MigrationLock);
-  let handle;
-  try {
-    handle = await open(lockPath, "wx");
-    await handle.writeFile(`${process.pid}\n`, TEXT_ENCODING);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new LoreError(
-        ErrorCode.MigrationFailed,
-        "另一个 Vault 迁移正在执行",
-        ExitCode.Conflict,
-      );
-    }
-    throw error;
-  }
+  const lock = await acquireMutationLock(
+    root,
+    MutationOperation.Migration,
+    "vault-schema",
+  );
   try {
     return await action();
   } finally {
-    await handle.close();
-    await rm(lockPath, { force: true });
+    await lock.release();
   }
 }
 
@@ -339,6 +312,18 @@ export async function applyMigration(
     await ensureDirectory(backupRoot);
     const changedFiles = [...new Set(plan.actions.map((item) => item.path))].sort();
     await backupFiles(root, backupRoot, changedFiles);
+    const journalPath = safeJoin(backupRoot, VaultFileName.TransactionJournal);
+    const journal = await prepareTransaction(
+      journalPath,
+      {
+        transaction_id: migrationId,
+        operation: MutationOperation.Migration,
+        subject: "vault-schema",
+        backup_root: backupRelativePath,
+        changed_files: changedFiles,
+      },
+      now,
+    );
 
     try {
       const config = await readVaultConfig(root);
@@ -393,9 +378,11 @@ export async function applyMigration(
           validation,
         );
       }
+      await updateTransactionStatus(journalPath, TransactionStatus.Committed, now);
       return { plan, record };
     } catch (error) {
-      await restoreFiles(root, backupRoot, changedFiles);
+      await restorePreparedTransaction(root, journal);
+      await updateTransactionStatus(journalPath, TransactionStatus.Recovered, now);
       if (error instanceof LoreError) {
         throw error;
       }
