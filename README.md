@@ -86,7 +86,7 @@ node dist/cli.js skill install
 
 当 Lore 被智能体或脚本调用时，请增加 `--json`，以获得稳定的机器可读输出。
 
-目录和 Git 采集只包含受支持的文本文件，跳过二进制、超大文件与符号链接；目录采集还会跳过 `.git`、`.lore`、`node_modules` 等目录。目录与 Git 仓库采集都会执行 Vault 和来源根目录中的 `.loreignore`，Git 仓库只读取 tracked 文件。显式采集 `.env` 会被拒绝；任何采集内容命中私钥、AWS Access Key、GitHub Token 或 OpenAI Key 的高置信度格式时也会被拒绝。只有确认目标 Vault 的访问边界安全后，才应使用 `source add --allow-sensitive`。
+目录和 Git 采集只包含受支持的文本文件，跳过二进制、超大文件与符号链接；目录采集还会跳过 `.git`、`.lore`、`node_modules` 等目录。目录与 Git 仓库采集都会执行 Vault 和来源根目录中的 `.loreignore`，Git 仓库只读取 tracked 文件。显式采集 `.env` 会被拒绝；任何新增或同步内容命中私钥、AWS Access Key、GitHub Token 或 OpenAI Key 的高置信度格式时也会被拒绝。只有确认目标 Vault 的访问边界安全后，才应为 `source add` 或 `source sync` 使用 `--allow-sensitive`。
 
 飞书文档采集复用本机 `lark-cli` 的 user 登录态；Lore 不读取或保存认证信息。
 

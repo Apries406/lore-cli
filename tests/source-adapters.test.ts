@@ -276,5 +276,20 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
     await expect(
       addSource(root, privateKeyPath, { allow_sensitive: true }),
     ).resolves.toMatchObject({ snapshot_created: true });
+
+    const changingPath = path.join(inputRoot, "changing.txt");
+    await writeFile(changingPath, "初始安全内容\n", "utf8");
+    const changing = await addSource(root, changingPath);
+    await writeFile(
+      changingPath,
+      "-----BEGIN PRIVATE KEY-----\n同步阶段的测试占位内容\n",
+      "utf8",
+    );
+    await expect(syncSource(root, changing.source.source_id)).rejects.toMatchObject<
+      Partial<LoreError>
+    >({ code: ErrorCode.SensitiveContentDetected });
+    await expect(
+      syncSource(root, changing.source.source_id, new Date(), true),
+    ).resolves.toMatchObject({ snapshot_created: true });
   });
 });

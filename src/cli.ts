@@ -488,11 +488,17 @@ function createProgram(): Command {
     .command("sync")
     .description("已有来源变化时采集新 Snapshot")
     .argument("<source-id>", "稳定的来源 ID")
-    .action(async (sourceId: string) => {
+    .option("--allow-sensitive", "确认并允许新 Snapshot 包含检测到的敏感凭证")
+    .action(async (sourceId: string, options: { allowSensitive?: boolean }) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.sourceAdded(
-        await syncSource(await resolveVaultRoot(globalOptions), sourceId),
+        await syncSource(
+          await resolveVaultRoot(globalOptions),
+          sourceId,
+          new Date(),
+          options.allowSensitive === true,
+        ),
       );
     });
 

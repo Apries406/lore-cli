@@ -931,6 +931,7 @@ export async function syncSource(
   root: string,
   sourceId: string,
   now: Date = new Date(),
+  allowSensitive = false,
 ): Promise<AddSourceResult> {
   const initial = await showSource(root, sourceId);
   const source = initial.source;
@@ -977,7 +978,7 @@ export async function syncSource(
     kind: source.kind,
     title: source.title,
     ...(revision ? { revision } : {}),
-    allow_sensitive: true,
+    allow_sensitive: allowSensitive,
     now,
   };
   let collected: CollectedSource;
