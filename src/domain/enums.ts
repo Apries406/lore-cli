@@ -234,6 +234,29 @@ export enum OutputFormat {
   Json = "json",
 }
 
+/** Lore 可原生探测和安装 Skill 的 Agent 类型。 */
+export enum AgentKind {
+  Codex = "codex",
+  ClaudeCode = "claude-code",
+  Trae = "trae",
+  TraeCn = "trae-cn",
+  Custom = "custom",
+}
+
+/** 单个内置 Skill 在 Agent 目录中的版本状态。 */
+export enum AgentSkillStatus {
+  Missing = "missing",
+  Current = "current",
+  Outdated = "outdated",
+}
+
+/** Agent 安装过程对目标目录采取的动作。 */
+export enum AgentInstallAction {
+  Installed = "installed",
+  Updated = "updated",
+  Skipped = "skipped",
+}
+
 /** 稳定的机器可读业务错误码。 */
 export enum ErrorCode {
   InvalidArgument = "invalid_argument",
@@ -256,6 +279,8 @@ export enum ErrorCode {
   IgnoredSource = "ignored_source",
   MutationLockHeld = "mutation_lock_held",
   RecoveryRequired = "recovery_required",
+  InvalidUserConfig = "invalid_user_config",
+  UnsupportedAgent = "unsupported_agent",
   Internal = "internal",
 }
 

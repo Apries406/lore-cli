@@ -1,4 +1,8 @@
-import { OutputFormat, ValidationSeverity } from "../domain/enums.js";
+import {
+  AgentInstallAction,
+  OutputFormat,
+  ValidationSeverity,
+} from "../domain/enums.js";
 import type {
   AddSourceResult,
   AuditReport,
@@ -6,6 +10,14 @@ import type {
   ValidationReport,
   VaultStatus,
 } from "../domain/models.js";
+import type { AgentFirstInitResult } from "../domain/agent-models.js";
+
+/** Agent 安装动作的人类可读名称；JSON 输出仍保留稳定枚举值。 */
+const AGENT_INSTALL_ACTION_LABELS: Readonly<Record<AgentInstallAction, string>> = {
+  [AgentInstallAction.Installed]: "已安装",
+  [AgentInstallAction.Updated]: "已升级",
+  [AgentInstallAction.Skipped]: "已跳过",
+};
 
 export class Reporter {
   public constructor(private readonly format: OutputFormat) {}
@@ -30,18 +42,32 @@ export class Reporter {
   }
 
   /** 输出初始化结果。 */
-  public initialized(result: {
-    root: string;
-    created_files: string[];
-    existing_files: string[];
-  }): void {
+  public initialized(result: AgentFirstInitResult): void {
     if (this.format === OutputFormat.Json) {
       this.data(result);
       return;
     }
 
-    process.stdout.write(`已在 ${result.root} 初始化 Lore 知识库。\n`);
+    process.stdout.write(
+      `${result.resumed ? "已继续" : "已初始化"} Lore 知识库：${result.root}\n`,
+    );
     process.stdout.write(`已创建 ${result.created_files.length} 个文件。\n`);
+    if (result.default_vault) {
+      process.stdout.write(`默认 Vault：${result.default_vault}\n`);
+    }
+    for (const installation of result.agent_installations) {
+      process.stdout.write(
+        `${installation.label}：${AGENT_INSTALL_ACTION_LABELS[installation.action]}（${installation.target}）\n`,
+      );
+    }
+    if (result.agent_installations.length === 0) {
+      process.stdout.write(
+        "尚未安装 Agent Skills；可执行 lore agent install --auto 或指定 Agent。\n",
+      );
+    }
+    process.stdout.write(
+      `自检：${result.validation.valid ? "通过" : "失败"}（${result.validation.errors} 个错误，${result.validation.warnings} 个警告）\n`,
+    );
   }
 
   /** 输出来源采集或同步结果。 */

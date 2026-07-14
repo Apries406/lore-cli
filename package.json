@@ -1,7 +1,7 @@
 {
   "name": "@apries/lore",
-  "version": "0.2.0",
-  "description": "面向人和智能体的本地优先知识编译器。",
+  "version": "0.3.0",
+  "description": "面向 Agent 的本地优先知识编译器。",
   "type": "module",
   "bin": {
     "lore": "dist/cli.js"

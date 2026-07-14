@@ -1,5 +1,5 @@
 import path from "node:path";
-import { ISO_DATE_LENGTH } from "../domain/constants.js";
+import { ISO_DATE_LENGTH, SCHEMA_VERSION } from "../domain/constants.js";
 import {
   DirectoryName,
   ErrorCode,
@@ -7,6 +7,7 @@ import {
   VaultFileName,
 } from "../domain/enums.js";
 import { LoreError } from "../errors.js";
+import type { VaultConfig } from "../domain/models.js";
 import {
   ensureDirectory,
   pathExists,
@@ -15,6 +16,7 @@ import {
 } from "../infrastructure/filesystem.js";
 import {
   serializeYaml,
+  readYamlFile,
   writeJsonFile,
 } from "../infrastructure/serialization.js";
 import {
@@ -33,6 +35,7 @@ import {
 
 export interface InitializeVaultResult {
   root: string;
+  resumed: boolean;
   created_files: string[];
   existing_files: string[];
 }
@@ -40,7 +43,7 @@ export interface InitializeVaultResult {
 /**
  * 初始化一个新的 Lore Vault。
  *
- * 只创建缺失文件，且检测到已有 lore.yaml 时拒绝继续，避免误覆盖现有知识库。
+ * 只创建缺失文件；同版本 Vault 可重复执行，以便 Agent 在中断后继续引导。
  */
 export async function initializeVault(
   targetPath: string,
@@ -49,12 +52,25 @@ export async function initializeVault(
   await ensureDirectory(root);
 
   const configPath = safeJoin(root, VaultFileName.Config);
-  if (await pathExists(configPath)) {
-    throw new LoreError(
-      ErrorCode.VaultAlreadyExists,
-      `目标目录已经是 Lore 知识库：${root}`,
-      ExitCode.Conflict,
-    );
+  const resumed = await pathExists(configPath);
+  if (resumed) {
+    const config = await readYamlFile<VaultConfig>(configPath).catch(() => undefined);
+    if (!config || typeof config.version !== "number") {
+      throw new LoreError(
+        ErrorCode.ValidationFailed,
+        `已有 Vault 配置无法读取：${configPath}`,
+        ExitCode.ValidationFailed,
+      );
+    }
+    if (config.version !== SCHEMA_VERSION) {
+      throw new LoreError(
+        config.version < SCHEMA_VERSION
+          ? ErrorCode.MigrationRequired
+          : ErrorCode.UnsupportedVaultVersion,
+        `已有 Vault 版本为 ${config.version}，当前 CLI 版本要求 ${SCHEMA_VERSION}`,
+        ExitCode.Conflict,
+      );
+    }
   }
 
   const directories = [
@@ -124,6 +140,7 @@ export async function initializeVault(
 
   return {
     root,
+    resumed,
     created_files: createdFiles.sort(),
     existing_files: existingFiles.sort(),
   };

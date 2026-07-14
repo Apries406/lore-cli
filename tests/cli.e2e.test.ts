@@ -1,17 +1,27 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 interface JsonEnvelope<T> {
   ok: boolean;
   data: T;
 }
 
+interface RunCliOptions {
+  env?: NodeJS.ProcessEnv;
+  input?: string;
+}
+
 describe("Lore CLI", () => {
   const temporaryRoots: string[] = [];
   const repositoryRoot = process.cwd();
+  let isolatedLoreHome = "";
+
+  beforeEach(async () => {
+    isolatedLoreHome = await temporaryDirectory("lore-cli-config-");
+  });
 
   afterEach(async () => {
     await Promise.all(
@@ -27,7 +37,7 @@ describe("Lore CLI", () => {
     return targetPath;
   }
 
-  function runCli(arguments_: string[]): {
+  function runCli(arguments_: string[], options: RunCliOptions = {}): {
     status: number | null;
     stdout: string;
     stderr: string;
@@ -35,7 +45,16 @@ describe("Lore CLI", () => {
     const result = spawnSync(
       process.execPath,
       ["--import", "tsx", "src/cli.ts", ...arguments_],
-      { cwd: repositoryRoot, encoding: "utf8" },
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          LORE_HOME: isolatedLoreHome,
+          ...options.env,
+        },
+        ...(options.input === undefined ? {} : { input: options.input }),
+      },
     );
     return {
       status: result.status,
@@ -291,5 +310,93 @@ describe("Lore CLI", () => {
         prepared.data.run.run_id,
       ]).status,
     ).toBe(0);
+  });
+
+  it("Agent-first init 自动检测、安装、配置默认 Vault 且可安全重入", async () => {
+    const home = await temporaryDirectory("lore-cli-agent-home-");
+    const loreHome = await temporaryDirectory("lore-cli-agent-config-");
+    const vault = path.join(home, "vault");
+    const customTarget = path.join(home, "other-agent", "skills");
+    await mkdir(path.join(home, ".codex"));
+    await mkdir(path.join(home, ".claude"));
+    await mkdir(path.join(home, ".trae-cn"));
+    const env = { HOME: home, LORE_HOME: loreHome, PATH: "" };
+
+    const initialized = runCli(
+      [
+        "--json",
+        "init",
+        vault,
+        "--auto-install",
+        "--skill-target",
+        customTarget,
+      ],
+      { env },
+    );
+    expect(initialized.status).toBe(0);
+    expect(JSON.parse(initialized.stdout)).toMatchObject({
+      data: {
+        root: vault,
+        resumed: false,
+        default_vault: vault,
+        validation: { valid: true },
+        agent_installations: [
+          { kind: "codex", action: "installed" },
+          { kind: "claude-code", action: "installed" },
+          { kind: "trae-cn", action: "installed" },
+          { kind: "custom", target: customTarget, action: "installed" },
+        ],
+      },
+    });
+    for (const target of [
+      path.join(home, ".agents", "skills"),
+      path.join(home, ".claude", "skills"),
+      path.join(home, ".trae-cn", "skills"),
+      customTarget,
+    ]) {
+      await expect(
+        readFile(path.join(target, "lore-compile", "SKILL.md"), "utf8"),
+      ).resolves.toContain("name: lore-compile");
+    }
+
+    const status = runCli(["--json", "status"], { env });
+    expect(status.status).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      data: { root: vault, validation: { valid: true } },
+    });
+    const resumed = runCli(["--json", "init", vault, "--auto-install"], {
+      env,
+    });
+    expect(resumed.status).toBe(0);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({
+      data: { resumed: true, agent_installations: [] },
+    });
+  });
+
+  it("init 允许交互选择内置 Agent 和任意 Skills 目录", async () => {
+    const home = await temporaryDirectory("lore-cli-interactive-home-");
+    const vault = path.join(home, "vault");
+    const customTarget = path.join(home, "other-agent", "skills");
+    const env = { HOME: home, PATH: "" };
+
+    const initialized = runCli(["init", vault, "--interactive"], {
+      env,
+      input: `1,2,custom=${customTarget}\n`,
+    });
+    expect(initialized.status).toBe(0);
+    expect(initialized.stderr).toBe("");
+    expect(initialized.stdout).toContain("Codex");
+    expect(initialized.stdout).toContain("Claude Code");
+    expect(initialized.stdout).toContain("其他 Agent");
+
+    for (const target of [
+      path.join(home, ".agents", "skills"),
+      path.join(home, ".claude", "skills"),
+      customTarget,
+    ]) {
+      await expect(
+        readFile(path.join(target, "lore-query", "SKILL.md"), "utf8"),
+      ).resolves.toContain("name: lore-query");
+    }
   });
 });

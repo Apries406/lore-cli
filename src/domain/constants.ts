@@ -1,5 +1,17 @@
 /** 当前 CLI 与采集器版本。 */
-export const LORE_VERSION = "0.2.0";
+export const LORE_VERSION = "0.3.0";
+/** 用户级 Lore 配置独立演进，不与 Vault Schema 版本绑定。 */
+export const LORE_USER_CONFIG_VERSION = 1;
+/** 支持在测试、容器和多配置环境中覆盖 Lore 用户目录与默认 Vault。 */
+export const LORE_HOME_ENVIRONMENT_VARIABLE = "LORE_HOME";
+export const LORE_ROOT_ENVIRONMENT_VARIABLE = "LORE_ROOT";
+export const XDG_CONFIG_HOME_ENVIRONMENT_VARIABLE = "XDG_CONFIG_HOME";
+export const XDG_DATA_HOME_ENVIRONMENT_VARIABLE = "XDG_DATA_HOME";
+export const APP_DATA_ENVIRONMENT_VARIABLE = "APPDATA";
+export const LOCAL_APP_DATA_ENVIRONMENT_VARIABLE = "LOCALAPPDATA";
+export const LORE_CONFIG_DIRECTORY_NAME = "lore";
+export const LORE_CONFIG_FILE_NAME = "config.yaml";
+export const DEFAULT_VAULT_DIRECTORY_NAME = "vault";
 /** 当前 Lore 元数据结构版本。 */
 export const SCHEMA_VERSION = 4;
 /** 当前生成与校验的 OKF 规范版本。 */

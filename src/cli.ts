@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { createInterface } from "node:readline/promises";
 import { Command, InvalidArgumentError, Option } from "commander";
 import type { ChangeSet } from "./domain/compile-models.js";
 import { DEFAULT_QUERY_RESULT_LIMIT, LORE_VERSION } from "./domain/constants.js";
 import {
+  AgentKind,
   ExitCode,
   OutputFormat,
   RawFallbackMode,
@@ -27,13 +29,26 @@ import {
 } from "./services/source-service.js";
 import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
-import { initializeVault } from "./services/vault-service.js";
 import { auditVault } from "./services/audit-service.js";
 import { withdrawSource } from "./services/source-impact-service.js";
 import {
   installBundledSkills,
   listBundledSkills,
 } from "./services/skill-service.js";
+import {
+  agentsNeedingAutomaticInstall,
+  inspectAgents,
+  installAgentSkills,
+  parseAgentKind,
+  SUPPORTED_AGENT_KINDS,
+} from "./services/agent-service.js";
+import { initializeAgentFirst } from "./services/bootstrap-service.js";
+import {
+  getDefaultNewVaultPath,
+  getDefaultVault,
+  resolveVaultRoot as resolveConfiguredVaultRoot,
+  setDefaultVault,
+} from "./services/lore-config-service.js";
 import {
   getRecoveryStatus,
   recoverVault,
@@ -97,6 +112,24 @@ interface SkillInstallOptions {
   force?: boolean;
 }
 
+interface AgentSelectionOptions {
+  agent?: string[];
+  skillTarget?: string[];
+  autoInstall?: boolean;
+  forceSkills?: boolean;
+  interactive?: boolean;
+}
+
+interface InitOptions extends AgentSelectionOptions {
+  agentInstall?: boolean;
+  setDefault?: boolean;
+}
+
+/** Commander 可重复选项的无副作用收集器。 */
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 /** 将可选的正整数 CLI 参数转成查询服务参数。 */
 function optionalPositiveInteger(value: string | undefined): number | undefined {
   if (!value) {
@@ -124,15 +157,90 @@ function outputFormat(options: GlobalOptions): OutputFormat {
 }
 
 /** 解析显式根目录，未指定时从当前目录向上寻找。 */
-async function resolveVaultRoot(options: GlobalOptions): Promise<string> {
-  const root = await findVaultRoot(options.root ?? process.cwd());
+async function resolveCompatibleVaultRoot(options: GlobalOptions): Promise<string> {
+  const root = await resolveConfiguredVaultRoot(options.root, process.cwd());
   await assertVaultCompatible(root);
   return root;
 }
 
 /** 只定位 Vault，不执行版本门禁；仅供 migrate 命令使用。 */
 async function locateVaultRoot(options: GlobalOptions): Promise<string> {
-  return findVaultRoot(options.root ?? process.cwd());
+  return resolveConfiguredVaultRoot(options.root, process.cwd());
+}
+
+/** 交互展示 Agent 检测结果，并接受编号、名称或 other 自定义路径。 */
+async function promptForAgentSelection(): Promise<{
+  agents: AgentKind[];
+  customTargets: string[];
+}> {
+  const inspections = await inspectAgents();
+  process.stdout.write("\n检测到以下 Agent 环境：\n");
+  inspections.forEach((item, index) => {
+    const state = item.detected ? "已检测" : "未检测";
+    const skillState = item.ready
+      ? "Lore Skills 已就绪"
+      : `缺少 ${item.missing_skills.length} 个，旧版 ${item.outdated_skills.length} 个`;
+    process.stdout.write(
+      `${index + 1}. ${item.label}（${item.kind}）：${state}，${skillState}\n`,
+    );
+  });
+  process.stdout.write("5. 其他 Agent：使用 custom=/path/to/skills\n");
+  const recommended = agentsNeedingAutomaticInstall(inspections);
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (
+      await terminal.question(
+        `请选择要安装的编号或名称（逗号分隔；回车使用检测结果 ${recommended.join(",") || "无"}；none 跳过）：`,
+      )
+    ).trim();
+    if (answer.toLocaleLowerCase() === "none") {
+      return { agents: [], customTargets: [] };
+    }
+    const tokens = answer
+      ? answer.split(/[\s,，]+/u).filter(Boolean)
+      : recommended;
+    const selected = new Set<AgentKind>();
+    const customTargets: string[] = [];
+    let wantsCustomTarget = false;
+    for (const tokenValue of tokens) {
+      const rawToken = String(tokenValue);
+      const token = rawToken.toLocaleLowerCase();
+      if (token === "all") {
+        SUPPORTED_AGENT_KINDS.forEach((kind) => selected.add(kind));
+      } else if (token === "detected") {
+        inspections
+          .filter((item) => item.detected)
+          .forEach((item) => selected.add(item.kind));
+      } else if (token === "5" || token === "other" || token === "custom") {
+        wantsCustomTarget = true;
+      } else if (token.startsWith("custom=") || token.startsWith("other=")) {
+        const customTarget = rawToken.slice(rawToken.indexOf("=") + 1).trim();
+        if (!customTarget) {
+          throw new InvalidArgumentError("其他 Agent 的 Skills 目录不能为空");
+        }
+        customTargets.push(customTarget);
+      } else if (/^[1-4]$/u.test(token)) {
+        const inspection = inspections[Number(token) - 1];
+        if (inspection) {
+          selected.add(inspection.kind);
+        }
+      } else {
+        selected.add(parseAgentKind(token));
+      }
+    }
+    if (wantsCustomTarget) {
+      const customTarget = (
+        await terminal.question("请输入其他 Agent 的用户级 Skills 目录：")
+      ).trim();
+      if (!customTarget) {
+        throw new InvalidArgumentError("其他 Agent 的 Skills 目录不能为空");
+      }
+      customTargets.push(customTarget);
+    }
+    return { agents: [...selected], customTargets };
+  } finally {
+    terminal.close();
+  }
 }
 
 /** 构建完整命令树。命令名属于稳定 CLI 协议，帮助文案使用中文。 */
@@ -152,11 +260,50 @@ function createProgram(): Command {
 
   program
     .command("init")
-    .description("初始化 Lore 知识库")
-    .argument("[path]", "目标目录", ".")
-    .action(async (targetPath: string) => {
+    .description("初始化默认 Vault 并为 Agent 安装 Lore Skills")
+    .argument("[path]", "目标目录；默认使用用户级 Lore 数据目录")
+    .option(
+      "--agent <agent>",
+      `安装目标，可重复：${SUPPORTED_AGENT_KINDS.join("、")}`,
+      collectOption,
+      [],
+    )
+    .option("--skill-target <path>", "其他 Agent 的 Skills 目录，可重复", collectOption, [])
+    .option("--auto-install", "自动为检测到且缺少 Lore Skills 的 Agent 安装")
+    .option("--force-skills", "升级目标中已存在但版本不同的 Lore Skills")
+    .option("--interactive", "强制显示 Agent 选择提示")
+    .option("--no-agent-install", "只初始化 Vault，不安装 Agent Skills")
+    .option("--no-set-default", "不将本次 Vault 设为用户默认值")
+    .action(async (targetPath: string | undefined, options: InitOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      if (options.interactive === true && globalOptions.json === true) {
+        throw new InvalidArgumentError("--interactive 不能与 --json 同时使用");
+      }
+      let agents = (options.agent ?? []).map(parseAgentKind);
+      let customTargets = options.skillTarget ?? [];
+      const shouldPrompt =
+        options.agentInstall !== false &&
+        options.autoInstall !== true &&
+        agents.length === 0 &&
+        customTargets.length === 0 &&
+        (options.interactive === true ||
+          (process.stdin.isTTY && process.stdout.isTTY && globalOptions.json !== true));
+      if (shouldPrompt) {
+        const selected = await promptForAgentSelection();
+        agents = selected.agents;
+        customTargets = selected.customTargets;
+      }
       const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
-      reporter.initialized(await initializeVault(targetPath));
+      reporter.initialized(
+        await initializeAgentFirst(targetPath ?? getDefaultNewVaultPath(), {
+          agents: options.agentInstall === false ? [] : agents,
+          custom_targets: options.agentInstall === false ? [] : customTargets,
+          auto_install:
+            options.agentInstall !== false && options.autoInstall === true,
+          force_skills: options.forceSkills === true,
+          set_default: options.setDefault !== false,
+        }),
+      );
     });
 
   const skill = program.command("skill").description("查看和安装 Lore Skills");
@@ -171,9 +318,9 @@ function createProgram(): Command {
 
   skill
     .command("install")
-    .description("安装一个或全部内置 Skill 到 Codex")
+    .description("安装一个或全部内置 Skill 到指定目录")
     .argument("[names...]", "Skill 名称；省略时安装全部")
-    .option("--target <path>", "安装目录；默认 $CODEX_HOME/skills")
+    .option("--target <path>", "安装目录；默认 ~/.agents/skills")
     .option("--force", "覆盖已存在的 Skill")
     .action(async (names: string[], options: SkillInstallOptions) => {
       const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
@@ -183,6 +330,90 @@ function createProgram(): Command {
           force: options.force === true,
         }),
       );
+    });
+
+  const agent = program
+    .command("agent")
+    .description("检测 Agent 并管理 Lore Skills");
+
+  agent
+    .command("status")
+    .description("检查 Codex、Claude Code 和 TRAE 的 Lore Skills 状态")
+    .action(async () => {
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      reporter.data(await inspectAgents());
+    });
+
+  agent
+    .command("install")
+    .description("向选定或自动检测到的 Agent 安装 Lore Skills")
+    .argument("[agents...]", `Agent：${SUPPORTED_AGENT_KINDS.join("、")}`)
+    .option("--auto", "只处理检测到且缺少 Lore Skills 的 Agent")
+    .option("--target <path>", "其他 Agent 的 Skills 目录，可重复", collectOption, [])
+    .option("--force", "升级已存在但版本不同的 Lore Skills")
+    .option("--interactive", "强制显示 Agent 选择提示")
+    .action(async (
+      agentValues: string[],
+      options: {
+        auto?: boolean;
+        target?: string[];
+        force?: boolean;
+        interactive?: boolean;
+      },
+    ) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      if (options.interactive === true && globalOptions.json === true) {
+        throw new InvalidArgumentError("--interactive 不能与 --json 同时使用");
+      }
+      let agents = agentValues.map(parseAgentKind);
+      let customTargets = options.target ?? [];
+      const shouldPrompt =
+        options.auto !== true &&
+        agents.length === 0 &&
+        customTargets.length === 0 &&
+        (options.interactive === true ||
+          (process.stdin.isTTY && process.stdout.isTTY && globalOptions.json !== true));
+      if (shouldPrompt) {
+        const selected = await promptForAgentSelection();
+        agents = selected.agents;
+        customTargets = selected.customTargets;
+      } else if (options.auto === true) {
+        agents = agentsNeedingAutomaticInstall(
+          await inspectAgents(),
+          options.force === true,
+        );
+      }
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await installAgentSkills(
+          agents,
+          customTargets,
+          options.force === true,
+        ),
+      );
+    });
+
+  const vault = program
+    .command("vault")
+    .description("管理 Agent 在任意目录使用的默认 Vault");
+
+  vault
+    .command("default")
+    .description("显示当前默认 Vault")
+    .action(async () => {
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      reporter.data({ default_vault: await getDefaultVault() });
+    });
+
+  vault
+    .command("use")
+    .description("设置默认 Vault")
+    .argument("<path>", "Vault 根目录或其内部路径")
+    .action(async (targetPath: string) => {
+      const root = await findVaultRoot(targetPath);
+      await assertVaultCompatible(root);
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      reporter.data(await setDefaultVault(root));
     });
 
   const migrate = program
@@ -265,7 +496,7 @@ function createProgram(): Command {
     .action(async (input: string, options: SourceAddOptions) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
-      const root = await resolveVaultRoot(globalOptions);
+      const root = await resolveCompatibleVaultRoot(globalOptions);
       reporter.sourceAdded(
         await addSource(root, input, {
           kind: options.kind,
@@ -289,7 +520,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.sourceAdded(
-        await addSource(await resolveVaultRoot(globalOptions), text, {
+        await addSource(await resolveCompatibleVaultRoot(globalOptions), text, {
           kind: SourceKind.Text,
           ...(options.title ? { title: options.title } : {}),
           allow_sensitive: options.allowSensitive === true,
@@ -310,7 +541,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await searchWiki(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           query,
           optionalPositiveInteger(options.limit) ?? DEFAULT_QUERY_RESULT_LIMIT,
           { include_inactive: options.includeInactive === true },
@@ -326,7 +557,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await showWikiPage(await resolveVaultRoot(globalOptions), relativePath),
+        await showWikiPage(await resolveCompatibleVaultRoot(globalOptions), relativePath),
       );
     });
 
@@ -341,7 +572,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await searchWiki(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           query,
           optionalPositiveInteger(options.limit) ?? DEFAULT_QUERY_RESULT_LIMIT,
           { include_inactive: options.includeInactive === true },
@@ -370,7 +601,7 @@ function createProgram(): Command {
       const maxWikiResults = optionalPositiveInteger(options.wikiLimit);
       const maxRawResults = optionalPositiveInteger(options.rawLimit);
       reporter.data(
-        await prepareQuery(await resolveVaultRoot(globalOptions), question, {
+        await prepareQuery(await resolveCompatibleVaultRoot(globalOptions), question, {
           fallback_mode: options.fallback,
           ...(maxWikiResults ? { max_wiki_results: maxWikiResults } : {}),
           ...(maxRawResults ? { max_raw_results: maxRawResults } : {}),
@@ -392,7 +623,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await prepareCompile(await resolveVaultRoot(globalOptions), sourceId, {
+        await prepareCompile(await resolveCompatibleVaultRoot(globalOptions), sourceId, {
           ...(options.snapshot ? { snapshot_id: options.snapshot } : {}),
           recompile: options.recompile === true,
         }),
@@ -410,7 +641,7 @@ function createProgram(): Command {
       const changeSet = parseYaml<ChangeSet>(await readFile(options.file, "utf8"));
       reporter.data(
         await submitChangeSet(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           runId,
           changeSet,
         ),
@@ -424,7 +655,7 @@ function createProgram(): Command {
     .action(async (runId: string) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
-      const root = await resolveVaultRoot(globalOptions);
+      const root = await resolveCompatibleVaultRoot(globalOptions);
       reporter.data({
         run: await getCompileRun(root, runId),
         packet: await getCompilePacket(root, runId),
@@ -441,7 +672,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await getEvidenceQuote(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           runId,
           options.locator,
         ),
@@ -456,7 +687,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.text(
-        await readCompileDiff(await resolveVaultRoot(globalOptions), runId),
+        await readCompileDiff(await resolveCompatibleVaultRoot(globalOptions), runId),
       );
     });
 
@@ -468,7 +699,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await applyCompile(await resolveVaultRoot(globalOptions), runId),
+        await applyCompile(await resolveCompatibleVaultRoot(globalOptions), runId),
       );
     });
 
@@ -480,7 +711,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await rollbackCompile(await resolveVaultRoot(globalOptions), runId),
+        await rollbackCompile(await resolveCompatibleVaultRoot(globalOptions), runId),
       );
     });
 
@@ -494,7 +725,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.sourceAdded(
         await syncSource(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           sourceId,
           new Date(),
           options.allowSensitive === true,
@@ -508,7 +739,7 @@ function createProgram(): Command {
     .action(async () => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
-      reporter.sources(await listSources(await resolveVaultRoot(globalOptions)));
+      reporter.sources(await listSources(await resolveCompatibleVaultRoot(globalOptions)));
     });
 
   source
@@ -519,7 +750,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await showSource(await resolveVaultRoot(globalOptions), sourceId),
+        await showSource(await resolveCompatibleVaultRoot(globalOptions), sourceId),
       );
     });
 
@@ -531,7 +762,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await getSourceHistory(await resolveVaultRoot(globalOptions), sourceId),
+        await getSourceHistory(await resolveCompatibleVaultRoot(globalOptions), sourceId),
       );
     });
 
@@ -543,7 +774,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
-        await getSourceImpact(await resolveVaultRoot(globalOptions), sourceId),
+        await getSourceImpact(await resolveCompatibleVaultRoot(globalOptions), sourceId),
       );
     });
 
@@ -556,7 +787,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await updateSourceLifecycle(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           sourceId,
           SourceLifecycleAction.Tombstone,
         ),
@@ -572,7 +803,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await updateSourceLifecycle(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           sourceId,
           SourceLifecycleAction.Restore,
         ),
@@ -588,7 +819,7 @@ function createProgram(): Command {
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.data(
         await withdrawSource(
-          await resolveVaultRoot(globalOptions),
+          await resolveCompatibleVaultRoot(globalOptions),
           sourceId,
         ),
       );
@@ -600,7 +831,7 @@ function createProgram(): Command {
     .action(async () => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
-      const report = await validateVault(await resolveVaultRoot(globalOptions));
+      const report = await validateVault(await resolveCompatibleVaultRoot(globalOptions));
       reporter.validation(report);
       if (!report.valid) {
         process.exitCode = ExitCode.ValidationFailed;
@@ -613,7 +844,7 @@ function createProgram(): Command {
     .action(async () => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
-      const report = await auditVault(await resolveVaultRoot(globalOptions));
+      const report = await auditVault(await resolveCompatibleVaultRoot(globalOptions));
       reporter.audit(report);
       if (!report.healthy) {
         process.exitCode = ExitCode.ValidationFailed;
@@ -627,7 +858,7 @@ function createProgram(): Command {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
       reporter.status(
-        await getVaultStatus(await resolveVaultRoot(globalOptions)),
+        await getVaultStatus(await resolveCompatibleVaultRoot(globalOptions)),
       );
     });
 
