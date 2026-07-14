@@ -25,6 +25,25 @@ export const SHA256_HEX_LENGTH = 64;
 export const DEFAULT_MAX_COMPILE_CHANGES = 8;
 /** 单次编译允许创建的新页面数量上限。 */
 export const DEFAULT_MAX_NEW_PAGES = 3;
+/** 默认返回的 Wiki 查询候选数。 */
+export const DEFAULT_QUERY_RESULT_LIMIT = 8;
+/** Wiki 证据不足时最多返回的 Raw 摘录数。 */
+export const DEFAULT_RAW_QUERY_RESULT_LIMIT = 5;
+/** Wiki 首个候选低于该分数时允许回退 Raw。 */
+export const DEFAULT_MIN_WIKI_QUERY_SCORE = 4;
+/** Raw 摘录默认包含命中行前后的行数。 */
+export const DEFAULT_RAW_EXCERPT_CONTEXT_LINES = 1;
+/** BM25 的词频饱和参数。 */
+export const BM25_TERM_SATURATION = 1.2;
+/** BM25 的文档长度归一化参数。 */
+export const BM25_LENGTH_NORMALIZATION = 0.75;
+/** 查询字段权重，集中定义以避免检索实现散落魔法数字。 */
+export const QUERY_TITLE_WEIGHT = 4;
+export const QUERY_TAG_WEIGHT = 3;
+export const QUERY_DESCRIPTION_WEIGHT = 1.5;
+export const QUERY_EXACT_TITLE_BONUS = 10;
+export const RAW_QUERY_TERM_WEIGHT = 2;
+export const RAW_QUERY_TITLE_WEIGHT = 3;
 /** Wiki 页面相对路径必须位于 pages/ 且使用稳定英文 slug。 */
 export const WIKI_PAGE_PATH_PATTERN = "^wiki/pages/[a-z0-9][a-z0-9-]*\\.md$";
 /** 第一版 Evidence 使用不可变 Snapshot 中的 1-based 行区间。 */

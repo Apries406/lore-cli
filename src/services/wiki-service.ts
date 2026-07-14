@@ -4,8 +4,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
+  BM25_LENGTH_NORMALIZATION,
+  BM25_TERM_SATURATION,
   CONCEPT_ID_PREFIX,
   FRONTMATTER_DELIMITER,
+  QUERY_DESCRIPTION_WEIGHT,
+  QUERY_EXACT_TITLE_BONUS,
+  QUERY_TAG_WEIGHT,
+  QUERY_TITLE_WEIGHT,
   SCHEMA_VERSION,
   TEXT_ENCODING,
 } from "../domain/constants.js";
@@ -15,10 +21,12 @@ import type {
   EvidenceReference,
   WikiBaseRevision,
 } from "../domain/compile-models.js";
+import type { WikiSearchResult } from "../domain/query-models.js";
 import {
   CandidateMatchReason,
   DirectoryName,
   KnowledgeStatus,
+  SearchMatchField,
   VaultFileName,
   WikiPageType,
 } from "../domain/enums.js";
@@ -112,18 +120,166 @@ export async function getWikiRevision(root: string): Promise<WikiBaseRevision> {
 }
 
 /** 生成中英文混合检索词；中文额外生成双字片段以提升简单召回率。 */
-function searchTerms(value: string): Set<string> {
+export function tokenizeForSearch(value: string): string[] {
   const normalized = value.toLocaleLowerCase().normalize("NFKC");
-  const terms = new Set(
-    normalized.split(/[^\p{L}\p{N}]+/gu).filter((item) => item.length >= 2),
-  );
+  const terms = normalized
+    .split(/[^\p{L}\p{N}]+/gu)
+    .filter((item) => item.length >= 2);
   const chineseRuns = normalized.match(/[\p{Script=Han}]+/gu) ?? [];
   for (const run of chineseRuns) {
     for (let index = 0; index < run.length - 1; index += 1) {
-      terms.add(run.slice(index, index + 2));
+      terms.push(run.slice(index, index + 2));
     }
   }
   return terms;
+}
+
+/** 去重后的检索词集合，供候选召回等只关心是否命中的场景使用。 */
+function searchTerms(value: string): Set<string> {
+  return new Set(tokenizeForSearch(value));
+}
+
+/** 统计某个词在 token 列表中的出现次数。 */
+function termFrequency(tokens: string[], term: string): number {
+  return tokens.reduce((count, token) => count + (token === term ? 1 : 0), 0);
+}
+
+/** 从正文中选择第一段命中查询词的非空行作为紧凑摘要。 */
+function matchingExcerpt(body: string, terms: Set<string>): string {
+  const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
+  return (
+    lines.find((line) => {
+      const lineTerms = searchTerms(line);
+      return [...lineTerms].some((term) => terms.has(term));
+    }) ??
+    lines[0] ??
+    ""
+  );
+}
+
+/**
+ * 使用字段加权 BM25 检索 Wiki。
+ * 保留完整 frontmatter 与正文，使查询 Skill 无需再次绕过 CLI 读取文件。
+ */
+export async function searchWiki(
+  root: string,
+  query: string,
+  limit: number,
+): Promise<WikiSearchResult[]> {
+  const pages = await listWikiPages(root);
+  const queryTerms = new Set(tokenizeForSearch(query));
+  if (queryTerms.size === 0 || pages.length === 0) {
+    return [];
+  }
+  const documents = pages.map((page) => {
+    const title = typeof page.frontmatter.title === "string" ? page.frontmatter.title : "";
+    const description =
+      typeof page.frontmatter.description === "string"
+        ? page.frontmatter.description
+        : "";
+    const tags = Array.isArray(page.frontmatter.tags)
+      ? page.frontmatter.tags.filter((item): item is string => typeof item === "string")
+      : [];
+    return {
+      page,
+      title,
+      description,
+      tags,
+      titleTokens: tokenizeForSearch(title),
+      descriptionTokens: tokenizeForSearch(description),
+      tagTokens: tokenizeForSearch(tags.join(" ")),
+      bodyTokens: tokenizeForSearch(page.body),
+    };
+  });
+  const averageBodyLength =
+    documents.reduce((sum, item) => sum + item.bodyTokens.length, 0) /
+    Math.max(documents.length, 1);
+  const documentTermSets = documents.map(
+    (item) =>
+      new Set([
+        ...item.titleTokens,
+        ...item.descriptionTokens,
+        ...item.tagTokens,
+        ...item.bodyTokens,
+      ]),
+  );
+  const documentFrequencyByTerm = new Map(
+    [...queryTerms].map((term) => [
+      term,
+      documentTermSets.filter((terms) => terms.has(term)).length,
+    ]),
+  );
+  const normalizedQuery = query.toLocaleLowerCase().normalize("NFKC").trim();
+  const results: WikiSearchResult[] = [];
+
+  for (const document of documents) {
+    let score = 0;
+    const matchedFields = new Set<SearchMatchField>();
+    for (const term of queryTerms) {
+      const documentFrequency = documentFrequencyByTerm.get(term) ?? 0;
+      const inverseDocumentFrequency = Math.log(
+        1 +
+          (documents.length - documentFrequency + 0.5) /
+            (documentFrequency + 0.5),
+      );
+      const bodyFrequency = termFrequency(document.bodyTokens, term);
+      if (bodyFrequency > 0) {
+        const lengthRatio = document.bodyTokens.length / Math.max(averageBodyLength, 1);
+        score +=
+          inverseDocumentFrequency *
+          ((bodyFrequency * (BM25_TERM_SATURATION + 1)) /
+            (bodyFrequency +
+              BM25_TERM_SATURATION *
+                (1 - BM25_LENGTH_NORMALIZATION + BM25_LENGTH_NORMALIZATION * lengthRatio)));
+        matchedFields.add(SearchMatchField.Body);
+      }
+      const titleFrequency = termFrequency(document.titleTokens, term);
+      if (titleFrequency > 0) {
+        score += titleFrequency * inverseDocumentFrequency * QUERY_TITLE_WEIGHT;
+        matchedFields.add(SearchMatchField.Title);
+      }
+      const tagFrequency = termFrequency(document.tagTokens, term);
+      if (tagFrequency > 0) {
+        score += tagFrequency * inverseDocumentFrequency * QUERY_TAG_WEIGHT;
+        matchedFields.add(SearchMatchField.Tag);
+      }
+      const descriptionFrequency = termFrequency(document.descriptionTokens, term);
+      if (descriptionFrequency > 0) {
+        score +=
+          descriptionFrequency * inverseDocumentFrequency * QUERY_DESCRIPTION_WEIGHT;
+        matchedFields.add(SearchMatchField.Description);
+      }
+    }
+    if (
+      normalizedQuery.length > 0 &&
+      document.title.toLocaleLowerCase().normalize("NFKC").includes(normalizedQuery)
+    ) {
+      score += QUERY_EXACT_TITLE_BONUS;
+      matchedFields.add(SearchMatchField.Title);
+    }
+    if (score <= 0) {
+      continue;
+    }
+    results.push({
+      path: document.page.path,
+      title: document.title || path.basename(document.page.path, ".md"),
+      page_type:
+        typeof document.page.frontmatter.type === "string"
+          ? document.page.frontmatter.type
+          : WikiPageType.Concept,
+      ...(document.description ? { description: document.description } : {}),
+      tags: document.tags,
+      score: Number(score.toFixed(4)),
+      match_fields: [...matchedFields],
+      excerpt: matchingExcerpt(document.page.body, queryTerms),
+      content_sha256: document.page.content_sha256,
+      frontmatter: document.page.frontmatter,
+      body: document.page.body,
+    });
+  }
+  return results
+    .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+    .slice(0, limit);
 }
 
 /**

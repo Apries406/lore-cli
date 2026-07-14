@@ -2,6 +2,8 @@ import {
   DEFAULT_MAX_COMPILE_CHANGES,
   DEFAULT_MAX_CANDIDATE_PAGES,
   DEFAULT_MAX_NEW_PAGES,
+  DEFAULT_MIN_WIKI_QUERY_SCORE,
+  DEFAULT_RAW_QUERY_RESULT_LIMIT,
   LINE_RANGE_LOCATOR_PATTERN,
   OKF_VERSION,
   SCHEMA_VERSION,
@@ -53,6 +55,8 @@ export function createProfile(): Record<string, unknown> {
       wiki_first: true,
       raw_fallback: QueryFallbackPolicy.WhenEvidenceIsInsufficient,
       max_candidate_pages: DEFAULT_MAX_CANDIDATE_PAGES,
+      max_raw_evidence: DEFAULT_RAW_QUERY_RESULT_LIMIT,
+      minimum_wiki_score: DEFAULT_MIN_WIKI_QUERY_SCORE,
     },
     compile: {
       max_changes: DEFAULT_MAX_COMPILE_CHANGES,

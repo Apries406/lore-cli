@@ -211,6 +211,21 @@ describe("Lore CLI", () => {
     expect(JSON.parse(runCli(["--json", "--root", vault, "status"]).stdout)).toMatchObject({
       data: { wiki_pages: 1, validation: { valid: true } },
     });
+    const query = runCli([
+      "--json",
+      "--root",
+      vault,
+      "query",
+      "prepare",
+      "双层知识模型是什么？",
+    ]);
+    expect(query.status).toBe(0);
+    expect(JSON.parse(query.stdout)).toMatchObject({
+      data: {
+        wiki_candidates: [{ path: "wiki/pages/two-layer-model.md" }],
+        fallback: { used: false },
+      },
+    });
     expect(
       runCli([
         "--json",

@@ -126,6 +126,30 @@ export enum CandidateMatchReason {
   ExistingEvidence = "existing_evidence",
 }
 
+/** Wiki 搜索结果命中的结构化字段。 */
+export enum SearchMatchField {
+  Title = "title",
+  Tag = "tag",
+  Description = "description",
+  Body = "body",
+}
+
+/** 查询阶段对 Raw Source 的回退控制。 */
+export enum RawFallbackMode {
+  Auto = "auto",
+  Always = "always",
+  Never = "never",
+}
+
+/** Query Packet 中记录的 Raw 回退原因。 */
+export enum RawFallbackReason {
+  Disabled = "disabled",
+  Forced = "forced",
+  NoWikiCandidate = "no_wiki_candidate",
+  WikiEvidenceInsufficient = "wiki_evidence_insufficient",
+  WikiEvidenceSufficient = "wiki_evidence_sufficient",
+}
+
 /** 页面归并策略。 */
 export enum MergeStrategy {
   UpsertFirst = "upsert_first",

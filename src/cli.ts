@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { Command, Option } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 import type { ChangeSet } from "./domain/compile-models.js";
-import { LORE_VERSION } from "./domain/constants.js";
+import { DEFAULT_QUERY_RESULT_LIMIT, LORE_VERSION } from "./domain/constants.js";
 import {
   ExitCode,
   OutputFormat,
+  RawFallbackMode,
   SourceKind,
 } from "./domain/enums.js";
 import { asLoreError } from "./errors.js";
@@ -22,6 +23,8 @@ import {
 import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
 import { initializeVault } from "./services/vault-service.js";
+import { prepareQuery, showWikiPage } from "./services/query-service.js";
+import { searchWiki } from "./services/wiki-service.js";
 import {
   applyCompile,
   getCompilePacket,
@@ -54,6 +57,28 @@ interface CompileSubmitOptions {
 
 interface CompileEvidenceOptions {
   locator: string;
+}
+
+interface WikiSearchOptions {
+  limit?: string;
+}
+
+interface QueryPrepareOptions {
+  fallback: RawFallbackMode;
+  wikiLimit?: string;
+  rawLimit?: string;
+}
+
+/** 将可选的正整数 CLI 参数转成查询服务参数。 */
+function optionalPositiveInteger(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InvalidArgumentError(`必须是正整数：${value}`);
+  }
+  return parsed;
 }
 
 /** Commander 内置帮助区块的中文标题。键值由依赖库定义，不能翻译。 */
@@ -121,6 +146,83 @@ function createProgram(): Command {
         await addSource(root, input, {
           kind: options.kind,
           ...(options.title ? { title: options.title } : {}),
+        }),
+      );
+    });
+
+  const wiki = program.command("wiki").description("检索和读取规范 Wiki 知识");
+
+  wiki
+    .command("search")
+    .description("使用字段加权 BM25 检索 Wiki")
+    .argument("<query>", "查询文本")
+    .option("--limit <number>", "最大结果数")
+    .action(async (query: string, options: WikiSearchOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await searchWiki(
+          await resolveVaultRoot(globalOptions),
+          query,
+          optionalPositiveInteger(options.limit) ?? DEFAULT_QUERY_RESULT_LIMIT,
+        ),
+      );
+    });
+
+  wiki
+    .command("show")
+    .description("读取一个 Wiki 知识页面")
+    .argument("<path>", "prepare/search 返回的 wiki/pages 路径")
+    .action(async (relativePath: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await showWikiPage(await resolveVaultRoot(globalOptions), relativePath),
+      );
+    });
+
+  program
+    .command("search")
+    .description("检索 Wiki；等价于 wiki search")
+    .argument("<query>", "查询文本")
+    .option("--limit <number>", "最大结果数")
+    .action(async (query: string, options: WikiSearchOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await searchWiki(
+          await resolveVaultRoot(globalOptions),
+          query,
+          optionalPositiveInteger(options.limit) ?? DEFAULT_QUERY_RESULT_LIMIT,
+        ),
+      );
+    });
+
+  const query = program
+    .command("query")
+    .description("生成 Wiki-first、必要时回退 Raw 的查询上下文包");
+
+  query
+    .command("prepare")
+    .description("为查询 Skill 准备只读上下文")
+    .argument("<question>", "需要回答的问题")
+    .addOption(
+      new Option("--fallback <mode>", "Raw 回退模式")
+        .choices(Object.values(RawFallbackMode))
+        .default(RawFallbackMode.Auto),
+    )
+    .option("--wiki-limit <number>", "最大 Wiki 候选数")
+    .option("--raw-limit <number>", "最大 Raw 摘录数")
+    .action(async (question: string, options: QueryPrepareOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const maxWikiResults = optionalPositiveInteger(options.wikiLimit);
+      const maxRawResults = optionalPositiveInteger(options.rawLimit);
+      reporter.data(
+        await prepareQuery(await resolveVaultRoot(globalOptions), question, {
+          fallback_mode: options.fallback,
+          ...(maxWikiResults ? { max_wiki_results: maxWikiResults } : {}),
+          ...(maxRawResults ? { max_raw_results: maxRawResults } : {}),
         }),
       );
     });
