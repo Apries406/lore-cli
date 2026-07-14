@@ -19,6 +19,15 @@ export class Reporter {
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   }
 
+  /** 输出可直接审阅的文本；JSON 模式仍使用统一信封。 */
+  public text(value: string): void {
+    if (this.format === OutputFormat.Json) {
+      this.data(value);
+      return;
+    }
+    process.stdout.write(value.endsWith("\n") ? value : `${value}\n`);
+  }
+
   /** 输出初始化结果。 */
   public initialized(result: {
     root: string;

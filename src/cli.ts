@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import { readFile } from "node:fs/promises";
 import { Command, Option } from "commander";
+import type { ChangeSet } from "./domain/compile-models.js";
 import { LORE_VERSION } from "./domain/constants.js";
 import {
   ExitCode,
@@ -9,6 +11,7 @@ import {
 } from "./domain/enums.js";
 import { asLoreError } from "./errors.js";
 import { findVaultRoot } from "./infrastructure/filesystem.js";
+import { parseYaml } from "./infrastructure/serialization.js";
 import { Reporter } from "./output/reporter.js";
 import {
   addSource,
@@ -19,6 +22,16 @@ import {
 import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
 import { initializeVault } from "./services/vault-service.js";
+import {
+  applyCompile,
+  getCompilePacket,
+  getCompileRun,
+  getEvidenceQuote,
+  prepareCompile,
+  readCompileDiff,
+  rollbackCompile,
+  submitChangeSet,
+} from "./services/compile-service.js";
 
 interface GlobalOptions {
   root?: string;
@@ -28,6 +41,19 @@ interface GlobalOptions {
 interface SourceAddOptions {
   kind: SourceKind;
   title?: string;
+}
+
+interface CompilePrepareOptions {
+  snapshot?: string;
+  recompile?: boolean;
+}
+
+interface CompileSubmitOptions {
+  file: string;
+}
+
+interface CompileEvidenceOptions {
+  locator: string;
 }
 
 /** Commander 内置帮助区块的中文标题。键值由依赖库定义，不能翻译。 */
@@ -96,6 +122,112 @@ function createProgram(): Command {
           kind: options.kind,
           ...(options.title ? { title: options.title } : {}),
         }),
+      );
+    });
+
+  const compile = program
+    .command("compile")
+    .description("将不可变 Raw Snapshot 编译为可审阅的 Wiki 变更");
+
+  compile
+    .command("prepare")
+    .description("生成供 Skill 消费的只读编译包")
+    .argument("<source-id>", "稳定的来源 ID")
+    .option("--snapshot <snapshot-id>", "指定 Snapshot；默认使用 latest")
+    .option("--recompile", "允许重新编译已有生效记录的 Snapshot")
+    .action(async (sourceId: string, options: CompilePrepareOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await prepareCompile(await resolveVaultRoot(globalOptions), sourceId, {
+          ...(options.snapshot ? { snapshot_id: options.snapshot } : {}),
+          recompile: options.recompile === true,
+        }),
+      );
+    });
+
+  compile
+    .command("submit")
+    .description("提交并校验 Skill 生成的结构化 Change Set")
+    .argument("<run-id>", "知识编译任务 ID")
+    .requiredOption("--file <path>", "Change Set YAML 文件")
+    .action(async (runId: string, options: CompileSubmitOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const changeSet = parseYaml<ChangeSet>(await readFile(options.file, "utf8"));
+      reporter.data(
+        await submitChangeSet(
+          await resolveVaultRoot(globalOptions),
+          runId,
+          changeSet,
+        ),
+      );
+    });
+
+  compile
+    .command("show")
+    .description("显示编译任务及编译包")
+    .argument("<run-id>", "知识编译任务 ID")
+    .action(async (runId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const root = await resolveVaultRoot(globalOptions);
+      reporter.data({
+        run: await getCompileRun(root, runId),
+        packet: await getCompilePacket(root, runId),
+      });
+    });
+
+  compile
+    .command("evidence")
+    .description("计算 Snapshot 精确行区间的证据摘录哈希")
+    .argument("<run-id>", "知识编译任务 ID")
+    .requiredOption("--locator <line-range>", "证据行区间，例如 line:3-8")
+    .action(async (runId: string, options: CompileEvidenceOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getEvidenceQuote(
+          await resolveVaultRoot(globalOptions),
+          runId,
+          options.locator,
+        ),
+      );
+    });
+
+  program
+    .command("diff")
+    .description("显示待应用知识变更")
+    .argument("<run-id>", "知识编译任务 ID")
+    .action(async (runId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.text(
+        await readCompileDiff(await resolveVaultRoot(globalOptions), runId),
+      );
+    });
+
+  program
+    .command("apply")
+    .description("在独占锁中事务应用已校验变更")
+    .argument("<run-id>", "知识编译任务 ID")
+    .action(async (runId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await applyCompile(await resolveVaultRoot(globalOptions), runId),
+      );
+    });
+
+  program
+    .command("rollback")
+    .description("安全回滚一次已应用知识编译")
+    .argument("<run-id>", "知识编译任务 ID")
+    .action(async (runId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await rollbackCompile(await resolveVaultRoot(globalOptions), runId),
       );
     });
 
