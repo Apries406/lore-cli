@@ -53,7 +53,7 @@ lore --version
 
 ## 自动发布
 
-仓库通过 GitHub Release 触发 [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)，使用 npm Trusted Publishing（OIDC）发布到 npmjs.org。工作流不保存 `NPM_TOKEN`，发布时会自动生成来源证明（provenance），并在发布前校验 Release 标签必须等于 `v<package.json version>`。
+仓库通过版本标签触发 [`.github/workflows/publish.yml`](./.github/workflows/publish.yml)，使用 npm Trusted Publishing（OIDC）发布到 npmjs.org。工作流不保存 `NPM_TOKEN`，发布时会自动生成来源证明（provenance），并在发布前校验 Git 标签必须等于 `v<package.json version>`。
 
 首次启用时，需要在 npm 的 `@apries/lore` 包设置中登记一次 Trusted Publisher：
 
@@ -64,7 +64,7 @@ lore --version
 - Environment：留空；
 - Allowed actions：`npm publish`。
 
-之后只需把 `package.json` 与 `package-lock.json` 更新为同一版本、合入 `main`，再发布对应 GitHub Release。例如版本 `0.4.0` 的 Release 标签必须是 `v0.4.0`。CI 会从 Release 对应提交执行完整 `prepack` 检查并发布；无需手动输入 npm OTP。
+之后只需把 `package.json` 与 `package-lock.json` 更新为同一版本、合入 `main`，再推送对应版本标签。例如版本 `0.4.0` 的标签必须是 `v0.4.0`。CI 会从标签对应提交执行完整 `prepack` 检查并发布；无需手动输入 npm OTP。
 
 ## 快速开始
 

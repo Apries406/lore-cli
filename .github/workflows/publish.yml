@@ -1,16 +1,16 @@
 name: 发布 npm 包
 
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: npm-publish-${{ github.event.release.tag_name }}
+  group: npm-publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: 检出 Release 代码
+      - name: 检出版本标签代码
         uses: actions/checkout@v6
 
       - name: 配置 Node.js 与 npmjs.org
@@ -36,9 +36,9 @@ jobs:
       - name: 安装依赖
         run: npm ci --ignore-scripts
 
-      - name: 校验 Release 标签与包版本
+      - name: 校验 Git 标签与包版本
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
