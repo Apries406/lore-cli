@@ -28,6 +28,7 @@ import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
 import { initializeVault } from "./services/vault-service.js";
 import { auditVault } from "./services/audit-service.js";
+import { withdrawSource } from "./services/source-impact-service.js";
 import {
   applyMigration,
   assertVaultCompatible,
@@ -72,6 +73,7 @@ interface CompileEvidenceOptions {
 
 interface WikiSearchOptions {
   limit?: string;
+  includeInactive?: boolean;
 }
 
 interface QueryPrepareOptions {
@@ -230,6 +232,7 @@ function createProgram(): Command {
     .description("使用字段加权 BM25 检索 Wiki")
     .argument("<query>", "查询文本")
     .option("--limit <number>", "最大结果数")
+    .option("--include-inactive", "包含 stale 与 superseded 页面")
     .action(async (query: string, options: WikiSearchOptions) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
@@ -238,6 +241,7 @@ function createProgram(): Command {
           await resolveVaultRoot(globalOptions),
           query,
           optionalPositiveInteger(options.limit) ?? DEFAULT_QUERY_RESULT_LIMIT,
+          { include_inactive: options.includeInactive === true },
         ),
       );
     });
@@ -259,6 +263,7 @@ function createProgram(): Command {
     .description("检索 Wiki；等价于 wiki search")
     .argument("<query>", "查询文本")
     .option("--limit <number>", "最大结果数")
+    .option("--include-inactive", "包含 stale 与 superseded 页面")
     .action(async (query: string, options: WikiSearchOptions) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
@@ -267,6 +272,7 @@ function createProgram(): Command {
           await resolveVaultRoot(globalOptions),
           query,
           optionalPositiveInteger(options.limit) ?? DEFAULT_QUERY_RESULT_LIMIT,
+          { include_inactive: options.includeInactive === true },
         ),
       );
     });
@@ -491,6 +497,21 @@ function createProgram(): Command {
           await resolveVaultRoot(globalOptions),
           sourceId,
           SourceLifecycleAction.Restore,
+        ),
+      );
+    });
+
+  source
+    .command("withdraw")
+    .description("逆序回滚连续编译链并逻辑删除 Source")
+    .argument("<source-id>", "稳定的来源 ID")
+    .action(async (sourceId: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await withdrawSource(
+          await resolveVaultRoot(globalOptions),
+          sourceId,
         ),
       );
     });

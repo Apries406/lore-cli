@@ -34,7 +34,12 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
     );
     await Promise.all(
       temporaryRoots.splice(0).map((targetPath) =>
-        rm(targetPath, { recursive: true, force: true }),
+        rm(targetPath, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 50,
+        }),
       ),
     );
   });

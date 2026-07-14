@@ -10,6 +10,7 @@ import {
   FRONTMATTER_DELIMITER,
   QUERY_DESCRIPTION_WEIGHT,
   QUERY_EXACT_TITLE_BONUS,
+  QUERY_LINK_CENTRALITY_WEIGHT,
   QUERY_TAG_WEIGHT,
   QUERY_TITLE_WEIGHT,
   SCHEMA_VERSION,
@@ -45,6 +46,10 @@ export interface WikiPage {
   content_sha256: string;
   frontmatter: Record<string, unknown>;
   body: string;
+}
+
+export interface SearchWikiOptions {
+  include_inactive?: boolean;
 }
 
 /** 解析 Markdown YAML frontmatter，并拒绝不完整页面。 */
@@ -173,8 +178,25 @@ export async function searchWiki(
   root: string,
   query: string,
   limit: number,
+  options: SearchWikiOptions = {},
 ): Promise<WikiSearchResult[]> {
-  const pages = await listWikiPages(root);
+  const allPages = await listWikiPages(root);
+  const pages = allPages.filter((page) => {
+    if (options.include_inactive === true) {
+      return true;
+    }
+    const lore =
+      page.frontmatter.lore &&
+      typeof page.frontmatter.lore === "object" &&
+      !Array.isArray(page.frontmatter.lore)
+        ? (page.frontmatter.lore as Record<string, unknown>)
+        : {};
+    return (
+      lore.status === undefined ||
+      lore.status === KnowledgeStatus.Active ||
+      lore.status === KnowledgeStatus.Draft
+    );
+  });
   const queryTerms = new Set(tokenizeForSearch(query));
   if (queryTerms.size === 0 || pages.length === 0) {
     return [];
@@ -218,6 +240,23 @@ export async function searchWiki(
     ]),
   );
   const normalizedQuery = query.toLocaleLowerCase().normalize("NFKC").trim();
+  const inboundLinks = new Map<string, number>();
+  const pagePaths = new Set(allPages.map((page) => page.path));
+  const linkPattern = /\[[^\]]+\]\(([^)]+)\)/gu;
+  for (const page of allPages) {
+    for (const match of page.body.matchAll(linkPattern)) {
+      const rawTarget = match[1]?.trim().split(/\s+/u)[0]?.split("#", 1)[0];
+      if (!rawTarget || /^[a-z][a-z0-9+.-]*:/iu.test(rawTarget)) {
+        continue;
+      }
+      const target = path.posix.normalize(
+        path.posix.join(path.posix.dirname(page.path), decodeURIComponent(rawTarget)),
+      );
+      if (pagePaths.has(target)) {
+        inboundLinks.set(target, (inboundLinks.get(target) ?? 0) + 1);
+      }
+    }
+  }
   const results: WikiSearchResult[] = [];
 
   for (const document of documents) {
@@ -268,6 +307,9 @@ export async function searchWiki(
     if (score <= 0) {
       continue;
     }
+    score +=
+      Math.log1p(inboundLinks.get(document.page.path) ?? 0) *
+      QUERY_LINK_CENTRALITY_WEIGHT;
     results.push({
       path: document.page.path,
       title: document.title || path.basename(document.page.path, ".md"),
@@ -421,7 +463,18 @@ export async function renderWikiIndex(root: string): Promise<string> {
       typeof page.frontmatter.type === "string"
         ? page.frontmatter.type
         : WikiPageType.Concept;
-    groups.set(type, [...(groups.get(type) ?? []), page]);
+    const lore =
+      page.frontmatter.lore &&
+      typeof page.frontmatter.lore === "object" &&
+      !Array.isArray(page.frontmatter.lore)
+        ? (page.frontmatter.lore as Record<string, unknown>)
+        : {};
+    const status = typeof lore.status === "string" ? lore.status : KnowledgeStatus.Active;
+    const group =
+      status === KnowledgeStatus.Active || status === KnowledgeStatus.Draft
+        ? type
+        : `${type} / ${status}`;
+    groups.set(group, [...(groups.get(group) ?? []), page]);
   }
   const sections = [...groups.entries()]
     .sort(([left], [right]) => left.localeCompare(right))

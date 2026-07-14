@@ -116,6 +116,12 @@ export function createConceptSchema(): Record<string, unknown> {
           status: { enum: Object.values(KnowledgeStatus) },
           confidence: { enum: Object.values(ConfidenceLevel) },
           merge_key: { type: "string", minLength: 1 },
+          supersedes: {
+            type: "array",
+            uniqueItems: true,
+            items: { type: "string", minLength: 1 },
+          },
+          superseded_by: { type: "string", minLength: 1 },
           evidence: {
             type: "array",
             items: {
@@ -277,7 +283,14 @@ export function createChangeSetSchema(): Record<string, unknown> {
           required: ["action", "target", "concept", "reason"],
           additionalProperties: false,
           properties: {
-            action: { enum: [ChangeAction.Create, ChangeAction.Update] },
+            action: {
+              enum: [
+                ChangeAction.Create,
+                ChangeAction.Update,
+                ChangeAction.Supersede,
+                ChangeAction.Retire,
+              ],
+            },
             target: {
               type: "object",
               required: ["path"],
@@ -316,6 +329,7 @@ export function createChangeSetSchema(): Record<string, unknown> {
                       uniqueItems: true,
                       items: { type: "string", minLength: 1 },
                     },
+                    superseded_by: { type: "string", minLength: 1 },
                     evidence: {
                       type: "array",
                       minItems: 1,

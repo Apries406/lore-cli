@@ -28,6 +28,7 @@ import {
   ErrorCode,
   ExitCode,
   KnowledgeOperation,
+  KnowledgeStatus,
   MediaType,
   MergeStrategy,
   VaultFileName,
@@ -486,6 +487,21 @@ export async function submitChangeSet(
     if (packet.policies.require_evidence) {
       validateEvidence(change.concept.lore?.evidence, packet, errors, targetPath);
     }
+    if (
+      change.action === ChangeAction.Supersede &&
+      (change.concept.lore?.status !== KnowledgeStatus.Superseded ||
+        !change.concept.lore.superseded_by)
+    ) {
+      errors.push(
+        `supersede 必须将 lore.status 设为 superseded 并声明 superseded_by：${targetPath}`,
+      );
+    }
+    if (
+      change.action === ChangeAction.Retire &&
+      change.concept.lore?.status !== KnowledgeStatus.Stale
+    ) {
+      errors.push(`retire 必须将 lore.status 设为 stale：${targetPath}`);
+    }
 
     let oldContent = "";
     let existingFrontmatter: Record<string, unknown> | undefined;
@@ -497,7 +513,11 @@ export async function submitChangeSet(
       if (change.target.expected_sha256) {
         errors.push(`create 目标不能声明 expected_sha256：${targetPath}`);
       }
-    } else if (change.action === ChangeAction.Update) {
+    } else if (
+      change.action === ChangeAction.Update ||
+      change.action === ChangeAction.Supersede ||
+      change.action === ChangeAction.Retire
+    ) {
       const candidate = candidateByPath.get(targetPath);
       if (!candidate) {
         errors.push(`update 目标不在 prepare 候选集中：${targetPath}`);
@@ -745,7 +765,7 @@ export async function applyCompile(
     let mutated = false;
     try {
       for (const change of proposal.changes) {
-        if (change.action === ChangeAction.Update) {
+        if (change.action !== ChangeAction.Create) {
           const current = await readWikiPage(root, change.target.path);
           if (current.content_sha256 !== change.target.expected_sha256) {
             throw new LoreError(

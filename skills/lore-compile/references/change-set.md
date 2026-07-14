@@ -41,6 +41,31 @@ changes:
 
 创建页面时使用 `action: create`，并省略 `expected_sha256`。允许的页面类型、单次变更数、新建页数和是否强制 Evidence 均以 packet 的 `policies` 为准。
 
+旧页面被新知识取代时，对旧页面提交：
+
+```yaml
+action: supersede
+target:
+  path: wiki/pages/old-model.md
+  expected_sha256: 候选页的64位摘要
+concept:
+  type: concept
+  title: 旧模型
+  lore:
+    status: superseded
+    superseded_by: wiki/pages/new-model.md
+    evidence:
+      - id: ev_replacement
+        source_id: src_0123456789ab
+        snapshot_id: snp_0123456789ab
+        locator: line:9-12
+        quote_sha256: 由 compile evidence 返回的64位摘要
+  body: 该知识已由新模型取代。
+reason: 新模型覆盖了旧模型的适用范围
+```
+
+没有替代知识但结论已经失效时使用 `action: retire`，并设置 `lore.status: stale`。`supersede`、`retire` 与 `update` 一样只能操作 prepare 返回的候选并携带 `expected_sha256`。
+
 如缺少会实质改变结论的信息，增加：
 
 ```yaml

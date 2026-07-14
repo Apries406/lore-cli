@@ -108,6 +108,7 @@ export enum ChangeAction {
   Create = "create",
   Update = "update",
   Supersede = "supersede",
+  Retire = "retire",
 }
 
 /** 会产生 Change Set 的语义操作。 */
@@ -210,6 +211,9 @@ export enum AuditDiagnosticCode {
   UncompiledLatestSnapshot = "uncompiled_latest_snapshot",
   StaleSource = "stale_source",
   IncompleteCompileRun = "incomplete_compile_run",
+  EvidenceSourceTombstoned = "evidence_source_tombstoned",
+  SupersededTargetMissing = "superseded_target_missing",
+  SupersedesTargetMissing = "supersedes_target_missing",
 }
 
 /** CLI 输出模式。 */

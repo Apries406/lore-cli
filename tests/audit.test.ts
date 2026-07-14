@@ -8,6 +8,8 @@ import {
   ChangeAction,
   CompileRunStatus,
   KnowledgeOperation,
+  SourceKind,
+  SourceLifecycleAction,
   WikiPageType,
 } from "../src/domain/enums.js";
 import { auditVault } from "../src/services/audit-service.js";
@@ -17,7 +19,10 @@ import {
   prepareCompile,
   submitChangeSet,
 } from "../src/services/compile-service.js";
-import { addSource } from "../src/services/source-service.js";
+import {
+  addSource,
+  updateSourceLifecycle,
+} from "../src/services/source-service.js";
 import { initializeVault } from "../src/services/vault-service.js";
 
 describe("知识库长期健康审计", () => {
@@ -173,5 +178,31 @@ describe("知识库长期健康审计", () => {
         incomplete_compile_runs: 0,
       },
     });
+  });
+
+  it("标记仍被 Wiki Evidence 引用的 tombstoned Source", async () => {
+    const root = await temporaryDirectory("lore-audit-tombstone-");
+    await initializeVault(root);
+    const content = "即将撤销的来源";
+    const added = await addSource(root, content, { kind: SourceKind.Text });
+    const locator = "line:1-1";
+    await writeFile(
+      path.join(root, "wiki/pages/tombstoned-source.md"),
+      `---\ntype: concept\ntitle: 被撤销来源\nlore:\n  status: active\n  evidence:\n    - id: ev_tombstoned\n      source_id: ${added.source.source_id}\n      snapshot_id: ${added.snapshot.snapshot_id}\n      locator: ${locator}\n      quote_sha256: ${evidenceQuoteSha256(content, locator)}\n---\n\n# 被撤销来源\n`,
+      "utf8",
+    );
+    await updateSourceLifecycle(
+      root,
+      added.source.source_id,
+      SourceLifecycleAction.Tombstone,
+    );
+
+    const report = await auditVault(root);
+
+    expect(report.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: AuditDiagnosticCode.EvidenceSourceTombstoned,
+      }),
+    );
   });
 });

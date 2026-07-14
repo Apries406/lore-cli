@@ -1,7 +1,7 @@
 /** 当前 CLI 与采集器版本。 */
 export const LORE_VERSION = "0.1.0";
 /** 当前 Lore 元数据结构版本。 */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 /** 当前生成与校验的 OKF 规范版本。 */
 export const OKF_VERSION = "0.1";
 /** 所有内容摘要统一使用 SHA-256，避免不同模块产生不兼容的 ID。 */
@@ -43,6 +43,7 @@ export const QUERY_TITLE_WEIGHT = 4;
 export const QUERY_TAG_WEIGHT = 3;
 export const QUERY_DESCRIPTION_WEIGHT = 1.5;
 export const QUERY_EXACT_TITLE_BONUS = 10;
+export const QUERY_LINK_CENTRALITY_WEIGHT = 0.25;
 export const RAW_QUERY_TERM_WEIGHT = 2;
 export const RAW_QUERY_TITLE_WEIGHT = 3;
 /** Active Source 超过该天数没有新 Snapshot 时给出陈旧警告。 */

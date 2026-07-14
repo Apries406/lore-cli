@@ -199,7 +199,7 @@ export async function getMigrationPlan(root: string): Promise<MigrationPlan> {
       actions: [],
     };
   }
-  if (![1, 2].includes(config.version) || SCHEMA_VERSION !== 3) {
+  if (![1, 2, 3].includes(config.version) || SCHEMA_VERSION !== 4) {
     throw new LoreError(
       ErrorCode.UnsupportedVaultVersion,
       `没有从 Vault v${config.version} 到 v${SCHEMA_VERSION} 的迁移路径`,

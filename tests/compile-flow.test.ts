@@ -11,6 +11,8 @@ import {
   DirectoryName,
   ErrorCode,
   KnowledgeOperation,
+  KnowledgeStatus,
+  SourceStatus,
   VaultFileName,
   WikiPageType,
 } from "../src/domain/enums.js";
@@ -26,8 +28,10 @@ import {
   submitChangeSet,
 } from "../src/services/compile-service.js";
 import { addSource } from "../src/services/source-service.js";
+import { withdrawSource } from "../src/services/source-impact-service.js";
 import { validateVault } from "../src/services/validation-service.js";
 import { initializeVault } from "../src/services/vault-service.js";
+import { searchWiki } from "../src/services/wiki-service.js";
 
 const PREPARE_TIME = new Date("2026-07-14T08:00:00.000Z");
 const SUBMIT_TIME = new Date("2026-07-14T08:01:00.000Z");
@@ -281,5 +285,111 @@ describe("Raw 到 Wiki 的知识编译流程", () => {
       ),
     ).toContain("所有更新都必须经过 Change Set");
     await expect(validateVault(fixture.root)).resolves.toMatchObject({ valid: true });
+  });
+
+  it("受控 supersede 后默认查询排除旧知识，并可按连续编译链撤销 Source", async () => {
+    const fixture = await createFixture();
+    const first = await prepareCompile(fixture.root, fixture.sourceId, {
+      now: PREPARE_TIME,
+    });
+    await submitChangeSet(
+      fixture.root,
+      first.run.run_id,
+      createChangeSet(first.packet),
+      SUBMIT_TIME,
+    );
+    await applyCompile(fixture.root, first.run.run_id, APPLY_TIME);
+
+    const second = await prepareCompile(fixture.root, fixture.sourceId, {
+      recompile: true,
+      now: new Date("2026-07-14T10:00:00.000Z"),
+    });
+    const oldCandidate = second.packet.candidates.find(
+      (item) => item.path === "wiki/pages/lore-knowledge-model.md",
+    );
+    if (!oldCandidate) {
+      throw new Error("测试缺少旧知识候选");
+    }
+    const replacement = createChangeSet(second.packet);
+    const createReplacement = replacement.changes[0];
+    if (!createReplacement) {
+      throw new Error("测试缺少 replacement 变更");
+    }
+    const oldLore =
+      oldCandidate.frontmatter.lore &&
+      typeof oldCandidate.frontmatter.lore === "object" &&
+      !Array.isArray(oldCandidate.frontmatter.lore)
+        ? (oldCandidate.frontmatter.lore as Record<string, unknown>)
+        : {};
+    const oldConceptId = oldLore.id;
+    const currentEvidence = createReplacement.concept.lore?.evidence;
+    if (typeof oldConceptId !== "string" || !currentEvidence) {
+      throw new Error("测试候选缺少 lore.id 或 Evidence");
+    }
+    createReplacement.target.path = "wiki/pages/lore-evolution-model.md";
+    createReplacement.concept.title = "Lore 知识演进模型";
+    createReplacement.concept.lore = {
+      ...createReplacement.concept.lore,
+      supersedes: [oldConceptId],
+    };
+    createReplacement.concept.body =
+      "# Lore 知识演进模型\n\n新的演进模型取代旧双层模型，并保留可追溯证据。";
+    replacement.changes.push({
+      action: ChangeAction.Supersede,
+      target: {
+        path: oldCandidate.path,
+        expected_sha256: oldCandidate.content_sha256,
+      },
+      reason: "旧模型已被更完整的知识演进模型取代",
+      concept: {
+        type: WikiPageType.Concept,
+        title: "Lore 双层知识模型",
+        lore: {
+          status: KnowledgeStatus.Superseded,
+          superseded_by: "wiki/pages/lore-evolution-model.md",
+          evidence: currentEvidence,
+        },
+        body: "# Lore 双层知识模型\n\n该模型已由 Lore 知识演进模型取代。",
+      },
+    });
+    const submitted = await submitChangeSet(
+      fixture.root,
+      second.run.run_id,
+      replacement,
+      new Date("2026-07-14T10:01:00.000Z"),
+    );
+    expect(submitted.run.status).toBe(CompileRunStatus.Validated);
+    await applyCompile(
+      fixture.root,
+      second.run.run_id,
+      new Date("2026-07-14T10:02:00.000Z"),
+    );
+
+    const activeResults = await searchWiki(fixture.root, "双层知识模型", 10);
+    expect(activeResults.map((item) => item.path)).not.toContain(oldCandidate.path);
+    const historicalResults = await searchWiki(
+      fixture.root,
+      "双层知识模型",
+      10,
+      { include_inactive: true },
+    );
+    expect(historicalResults.map((item) => item.path)).toContain(oldCandidate.path);
+
+    const withdrawn = await withdrawSource(
+      fixture.root,
+      fixture.sourceId,
+      new Date("2026-07-14T10:03:00.000Z"),
+    );
+    expect(withdrawn.source.status).toBe(SourceStatus.Tombstoned);
+    expect(withdrawn.rolled_back_runs).toEqual([
+      second.run.run_id,
+      first.run.run_id,
+    ]);
+    expect(
+      await pathExists(path.join(fixture.root, "wiki/pages/lore-evolution-model.md")),
+    ).toBe(false);
+    expect(
+      await pathExists(path.join(fixture.root, "wiki/pages/lore-knowledge-model.md")),
+    ).toBe(false);
   });
 });

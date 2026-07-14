@@ -33,6 +33,7 @@ export interface LoreConceptMetadata {
   merge_key?: string;
   evidence?: EvidenceReference[];
   supersedes?: string[];
+  superseded_by?: string;
 }
 
 /** Skill 输出的结构化 Concept，而不是任意 Markdown Patch。 */

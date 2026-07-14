@@ -25,6 +25,7 @@ import type {
   AuditReport,
   LatestSnapshotPointer,
   SnapshotManifest,
+  SourceMetadata,
 } from "../domain/models.js";
 import { pathExists, safeJoin } from "../infrastructure/filesystem.js";
 import { readYamlFile } from "../infrastructure/serialization.js";
@@ -282,6 +283,17 @@ async function auditEvidence(
         );
         continue;
       }
+      const evidenceSource = await readYamlFile<SourceMetadata>(sourcePath);
+      if (evidenceSource.status === SourceStatus.Tombstoned) {
+        diagnostics.push(
+          diagnostic(
+            ValidationSeverity.Warning,
+            AuditDiagnosticCode.EvidenceSourceTombstoned,
+            page.path,
+            `Evidence ${item.id} 引用的 Source 已被 tombstone`,
+          ),
+        );
+      }
       const manifestPath = safeJoin(
         root,
         DirectoryName.Raw,
@@ -346,6 +358,54 @@ async function auditEvidence(
     }
   }
   return pagesWithEvidence;
+}
+
+/** 验证 superseded 页面确实指向仍存在的替代知识。 */
+function auditSupersededTargets(
+  pages: WikiPage[],
+  diagnostics: AuditDiagnostic[],
+): void {
+  const pagePaths = new Set(pages.map((page) => page.path));
+  const conceptIds = new Set(
+    pages
+      .map((page) => loreMetadata(page).id)
+      .filter((value): value is string => typeof value === "string"),
+  );
+  for (const page of pages) {
+    const lore = loreMetadata(page);
+    if (lore.status !== KnowledgeStatus.Superseded) {
+      const supersedes = Array.isArray(lore.supersedes)
+        ? lore.supersedes.filter((value): value is string => typeof value === "string")
+        : [];
+      for (const target of supersedes) {
+        if (!pagePaths.has(target) && !conceptIds.has(target)) {
+          diagnostics.push(
+            diagnostic(
+              ValidationSeverity.Error,
+              AuditDiagnosticCode.SupersedesTargetMissing,
+              page.path,
+              `页面声明 supersedes 了不存在的知识：${target}`,
+            ),
+          );
+        }
+      }
+      continue;
+    }
+    const target = lore.superseded_by;
+    if (
+      typeof target !== "string" ||
+      (!pagePaths.has(target) && !conceptIds.has(target))
+    ) {
+      diagnostics.push(
+        diagnostic(
+          ValidationSeverity.Error,
+          AuditDiagnosticCode.SupersededTargetMissing,
+          page.path,
+          `superseded 页面指向了不存在的替代知识：${String(target)}`,
+        ),
+      );
+    }
+  }
 }
 
 /** 判断 latest Snapshot 是否至少存在一条仍处于 Applied 的编译记录。 */
@@ -539,6 +599,7 @@ export async function auditVault(
   if (policy.check_orphan_pages) {
     auditOrphanPages(pages, diagnostics);
   }
+  auditSupersededTargets(pages, diagnostics);
   const incompleteRuns = await auditCompileRuns(root, now, policy, diagnostics);
   diagnostics.sort(
     (left, right) =>

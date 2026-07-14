@@ -77,6 +77,13 @@ export interface SourceImpact {
   compilation_runs: string[];
 }
 
+/** 撤销 Source 知识影响并 tombstone 后的结果。 */
+export interface SourceWithdrawalResult {
+  source: SourceMetadata;
+  rolled_back_runs: string[];
+  previous_impact: SourceImpact;
+}
+
 /** 单条机器可读校验诊断。 */
 export interface ValidationDiagnostic {
   severity: ValidationSeverity;
