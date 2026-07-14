@@ -87,4 +87,138 @@ describe("Lore CLI", () => {
       data: { valid: true, errors: 0 },
     });
   });
+
+  it("通过 CLI 完成知识编译、审阅、应用和回滚", async () => {
+    const vault = await temporaryDirectory("lore-cli-compile-vault-");
+    const inputDirectory = await temporaryDirectory("lore-cli-compile-input-");
+    const inputPath = path.join(inputDirectory, "source.md");
+    const content = "Raw 保存不可变证据。\nWiki 保存可演进知识。\n";
+    await writeFile(inputPath, content, "utf8");
+    expect(runCli(["--json", "init", vault]).status).toBe(0);
+
+    const added = JSON.parse(
+      runCli(["--json", "--root", vault, "source", "add", inputPath]).stdout,
+    ) as JsonEnvelope<{
+      source: { source_id: string };
+    }>;
+    const preparedResult = runCli([
+      "--json",
+      "--root",
+      vault,
+      "compile",
+      "prepare",
+      added.data.source.source_id,
+    ]);
+    expect(preparedResult.status).toBe(0);
+    const prepared = JSON.parse(preparedResult.stdout) as JsonEnvelope<{
+      run: { run_id: string };
+      packet: {
+        vault: { base_revision: { wiki_sha256: string } };
+        input: {
+          source: { source_id: string };
+          snapshot: { snapshot_id: string };
+        };
+      };
+    }>;
+    const changeSetPath = path.join(inputDirectory, "change-set.yaml");
+    const evidence = JSON.parse(
+      runCli([
+        "--json",
+        "--root",
+        vault,
+        "compile",
+        "evidence",
+        prepared.data.run.run_id,
+        "--locator",
+        "line:1-2",
+      ]).stdout,
+    ) as JsonEnvelope<{ quote_sha256: string }>;
+    await writeFile(
+      changeSetPath,
+      JSON.stringify({
+        version: 1,
+        run_id: prepared.data.run.run_id,
+        base_revision: prepared.data.packet.vault.base_revision,
+        operation: "compile",
+        inputs: [
+          {
+            source_id: prepared.data.packet.input.source.source_id,
+            snapshot_id: prepared.data.packet.input.snapshot.snapshot_id,
+          },
+        ],
+        summary: "沉淀双层知识模型",
+        changes: [
+          {
+            action: "create",
+            target: { path: "wiki/pages/two-layer-model.md" },
+            reason: "形成可复用知识",
+            concept: {
+              type: "concept",
+              title: "双层知识模型",
+              lore: {
+                evidence: [
+                  {
+                    id: "ev_two_layers",
+                    source_id: prepared.data.packet.input.source.source_id,
+                    snapshot_id: prepared.data.packet.input.snapshot.snapshot_id,
+                    locator: "line:1-2",
+                    quote_sha256: evidence.data.quote_sha256,
+                  },
+                ],
+              },
+              body: "# 双层知识模型\n\nRaw 与 Wiki 各自承担不同职责。",
+            },
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const submitted = runCli([
+      "--json",
+      "--root",
+      vault,
+      "compile",
+      "submit",
+      prepared.data.run.run_id,
+      "--file",
+      changeSetPath,
+    ]);
+    expect(submitted.status).toBe(0);
+    expect(JSON.parse(submitted.stdout)).toMatchObject({
+      data: { run: { status: "validated" }, validation: { valid: true } },
+    });
+    expect(
+      JSON.parse(
+        runCli([
+          "--json",
+          "--root",
+          vault,
+          "diff",
+          prepared.data.run.run_id,
+        ]).stdout,
+      ).data,
+    ).toContain("two-layer-model.md");
+    expect(
+      runCli([
+        "--json",
+        "--root",
+        vault,
+        "apply",
+        prepared.data.run.run_id,
+      ]).status,
+    ).toBe(0);
+    expect(JSON.parse(runCli(["--json", "--root", vault, "status"]).stdout)).toMatchObject({
+      data: { wiki_pages: 1, validation: { valid: true } },
+    });
+    expect(
+      runCli([
+        "--json",
+        "--root",
+        vault,
+        "rollback",
+        prepared.data.run.run_id,
+      ]).status,
+    ).toBe(0);
+  });
 });
