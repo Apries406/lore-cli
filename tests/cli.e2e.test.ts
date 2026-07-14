@@ -14,6 +14,9 @@ interface RunCliOptions {
   input?: string;
 }
 
+/** 端到端工作流会启动多个独立 Node 进程，给较慢的 CI 留出稳定余量。 */
+const CLI_WORKFLOW_TIMEOUT_MILLISECONDS = 15_000;
+
 describe("Lore CLI", () => {
   const temporaryRoots: string[] = [];
   const repositoryRoot = process.cwd();
@@ -161,7 +164,7 @@ describe("Lore CLI", () => {
       ok: true,
       data: { valid: true, errors: 0 },
     });
-  });
+  }, CLI_WORKFLOW_TIMEOUT_MILLISECONDS);
 
   it("通过 CLI 完成知识编译、审阅、应用和回滚", async () => {
     const vault = await temporaryDirectory("lore-cli-compile-vault-");
@@ -310,7 +313,7 @@ describe("Lore CLI", () => {
         prepared.data.run.run_id,
       ]).status,
     ).toBe(0);
-  });
+  }, CLI_WORKFLOW_TIMEOUT_MILLISECONDS);
 
   it("Agent-first init 自动检测、安装、配置默认 Vault 且可安全重入", async () => {
     const home = await temporaryDirectory("lore-cli-agent-home-");
