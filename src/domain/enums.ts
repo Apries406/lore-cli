@@ -17,6 +17,8 @@ export enum DirectoryName {
   Runtime = ".lore",
   Runs = "runs",
   Staging = "staging",
+  Backup = "backup",
+  Compilations = "compilations",
 }
 
 /** 知识库内具有固定语义的文件名。 */
@@ -34,6 +36,13 @@ export enum VaultFileName {
   SourceMetadata = "source.yaml",
   LatestSnapshot = "latest.yaml",
   SnapshotManifest = "manifest.yaml",
+  CompileRun = "run.yaml",
+  CompilePacket = "packet.yaml",
+  CompileProposal = "proposal.yaml",
+  CompileValidation = "validation.yaml",
+  CompileDiff = "diff.patch",
+  CompileLock = "compile.lock",
+  CompilationRecord = "compilation.yaml",
 }
 
 /** 原始来源类型；当前采集器只实现了本地文件。 */
@@ -96,6 +105,27 @@ export enum KnowledgeOperation {
   Promote = "promote",
 }
 
+/** 一次知识编译任务的生命周期状态。 */
+export enum CompileRunStatus {
+  Prepared = "prepared",
+  Proposed = "proposed",
+  NeedsInput = "needs_input",
+  Validated = "validated",
+  Applied = "applied",
+  Rejected = "rejected",
+  Conflict = "conflict",
+  Failed = "failed",
+  RolledBack = "rolled_back",
+}
+
+/** 候选 Wiki 页面被召回的原因。 */
+export enum CandidateMatchReason {
+  Title = "title",
+  Tag = "tag",
+  Body = "body",
+  ExistingEvidence = "existing_evidence",
+}
+
 /** 页面归并策略。 */
 export enum MergeStrategy {
   UpsertFirst = "upsert_first",
@@ -145,6 +175,11 @@ export enum ErrorCode {
   UnsupportedSourceKind = "unsupported_source_kind",
   ValidationFailed = "validation_failed",
   Conflict = "conflict",
+  AlreadyCompiled = "already_compiled",
+  CompileRunNotFound = "compile_run_not_found",
+  InvalidRunState = "invalid_run_state",
+  InvalidChangeSet = "invalid_change_set",
+  CompileLockHeld = "compile_lock_held",
   Internal = "internal",
 }
 

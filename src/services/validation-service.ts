@@ -271,12 +271,7 @@ function resolveMarkdownLink(
   }
 
   const withoutAnchor = withoutTitle.split("#", 1)[0];
-  if (
-    !withoutAnchor ||
-    withoutAnchor.startsWith("http://") ||
-    withoutAnchor.startsWith("https://") ||
-    withoutAnchor.startsWith("mailto:")
-  ) {
+  if (!withoutAnchor || /^[a-z][a-z0-9+.-]*:/iu.test(withoutAnchor)) {
     return undefined;
   }
 

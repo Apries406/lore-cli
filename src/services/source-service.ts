@@ -58,6 +58,13 @@ export interface AddSourceOptions {
   now?: Date;
 }
 
+/** 编译阶段读取的不可变 Snapshot 及其文本内容。 */
+export interface SourceSnapshot {
+  source: SourceMetadata;
+  snapshot: SnapshotManifest;
+  content: Buffer;
+}
+
 /** 保留原始扩展名，避免 Snapshot 内容与声明的媒体类型不一致。 */
 function contentFileName(sourcePath: string): string {
   const extension = path.extname(sourcePath).toLowerCase();
@@ -264,4 +271,57 @@ export async function showSource(
     source: await readYamlFile<SourceMetadata>(metadataPath),
     latest: await readYamlFile<LatestSnapshotPointer>(latestPath),
   };
+}
+
+/**
+ * 读取指定 Snapshot；未传 snapshotId 时读取 latest 指针。
+ * 调用方仍需根据 media_type 判断是否支持对应内容格式。
+ */
+export async function readSourceSnapshot(
+  root: string,
+  sourceId: string,
+  snapshotId?: string,
+): Promise<SourceSnapshot> {
+  const { source, latest } = await showSource(root, sourceId);
+  const selectedSnapshotId = snapshotId ?? latest.snapshot_id;
+  const snapshotDirectory = safeJoin(
+    root,
+    DirectoryName.Raw,
+    DirectoryName.Sources,
+    sourceId,
+    DirectoryName.Snapshots,
+    selectedSnapshotId,
+  );
+  const manifestPath = safeJoin(
+    snapshotDirectory,
+    VaultFileName.SnapshotManifest,
+  );
+
+  if (!(await pathExists(manifestPath))) {
+    throw new LoreError(
+      ErrorCode.SourceNotFound,
+      `来源 ${sourceId} 不存在 Snapshot：${selectedSnapshotId}`,
+      ExitCode.NotFound,
+    );
+  }
+
+  const snapshot = await readYamlFile<SnapshotManifest>(manifestPath);
+  if (snapshot.source_id !== sourceId || snapshot.snapshot_id !== selectedSnapshotId) {
+    throw new LoreError(
+      ErrorCode.Conflict,
+      `Snapshot 元数据身份与路径不一致：${selectedSnapshotId}`,
+      ExitCode.Conflict,
+    );
+  }
+
+  const content = await readFile(safeJoin(snapshotDirectory, snapshot.content_path));
+  if (sha256(content) !== snapshot.content_sha256) {
+    throw new LoreError(
+      ErrorCode.Conflict,
+      `Snapshot 内容校验失败：${selectedSnapshotId}`,
+      ExitCode.Conflict,
+    );
+  }
+
+  return { source, snapshot, content };
 }
