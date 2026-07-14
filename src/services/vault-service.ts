@@ -83,6 +83,8 @@ export async function initializeVault(
     [DirectoryName.Runtime, DirectoryName.Runs],
     [DirectoryName.Runtime, DirectoryName.Staging],
     [DirectoryName.Runtime, DirectoryName.Migrations],
+    [DirectoryName.Runtime, DirectoryName.Usage],
+    [DirectoryName.Runtime, DirectoryName.Usage, DirectoryName.Queries],
   ];
 
   for (const segments of directories) {

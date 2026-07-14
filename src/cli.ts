@@ -4,7 +4,13 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { Command, InvalidArgumentError, Option } from "commander";
 import type { ChangeSet } from "./domain/compile-models.js";
-import { DEFAULT_QUERY_RESULT_LIMIT, LORE_VERSION } from "./domain/constants.js";
+import {
+  DEFAULT_COLD_KNOWLEDGE_DAYS,
+  DEFAULT_DASHBOARD_PORT,
+  DEFAULT_DASHBOARD_WINDOW_DAYS,
+  DEFAULT_QUERY_RESULT_LIMIT,
+  LORE_VERSION,
+} from "./domain/constants.js";
 import {
   AgentKind,
   ExitCode,
@@ -70,6 +76,11 @@ import {
   rollbackCompile,
   submitChangeSet,
 } from "./services/compile-service.js";
+import { getDashboardSnapshot } from "./services/dashboard-service.js";
+import {
+  openDashboardInBrowser,
+  startDashboardServer,
+} from "./services/dashboard-server.js";
 
 interface GlobalOptions {
   root?: string;
@@ -105,6 +116,15 @@ interface QueryPrepareOptions {
   fallback: RawFallbackMode;
   wikiLimit?: string;
   rawLimit?: string;
+  track?: boolean;
+}
+
+interface DashboardCommandOptions {
+  host: string;
+  port: string;
+  window: string;
+  cold: string;
+  open?: boolean;
 }
 
 interface SkillInstallOptions {
@@ -586,7 +606,7 @@ function createProgram(): Command {
 
   query
     .command("prepare")
-    .description("为查询 Skill 准备只读上下文")
+    .description("为查询 Skill 准备上下文并记录本地召回统计")
     .argument("<question>", "需要回答的问题")
     .addOption(
       new Option("--fallback <mode>", "Raw 回退模式")
@@ -595,6 +615,7 @@ function createProgram(): Command {
     )
     .option("--wiki-limit <number>", "最大 Wiki 候选数")
     .option("--raw-limit <number>", "最大 Raw 摘录数")
+    .option("--no-track", "本次查询不写入本地召回统计")
     .action(async (question: string, options: QueryPrepareOptions) => {
       const globalOptions = program.opts<GlobalOptions>();
       const reporter = new Reporter(outputFormat(globalOptions));
@@ -605,8 +626,76 @@ function createProgram(): Command {
           fallback_mode: options.fallback,
           ...(maxWikiResults ? { max_wiki_results: maxWikiResults } : {}),
           ...(maxRawResults ? { max_raw_results: maxRawResults } : {}),
+          track_usage: options.track !== false,
         }),
       );
+    });
+
+  const usage = program
+    .command("usage")
+    .description("查看 Agent 查询的本地召回统计");
+
+  usage
+    .command("stats")
+    .description("输出 Dashboard 使用的聚合数据")
+    .option(
+      "--window <days>",
+      "近期统计窗口天数",
+      String(DEFAULT_DASHBOARD_WINDOW_DAYS),
+    )
+    .option(
+      "--cold <days>",
+      "冷知识判定天数",
+      String(DEFAULT_COLD_KNOWLEDGE_DAYS),
+    )
+    .action(async (options: { window: string; cold: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getDashboardSnapshot(await resolveCompatibleVaultRoot(globalOptions), {
+          window_days:
+            optionalPositiveInteger(options.window) ?? DEFAULT_DASHBOARD_WINDOW_DAYS,
+          cold_after_days:
+            optionalPositiveInteger(options.cold) ?? DEFAULT_COLD_KNOWLEDGE_DAYS,
+        }),
+      );
+    });
+
+  program
+    .command("dashboard")
+    .description("启动本机 Lore Web Dashboard")
+    .option("--host <host>", "监听地址，仅允许回环地址", "127.0.0.1")
+    .option("--port <number>", "监听端口", String(DEFAULT_DASHBOARD_PORT))
+    .option(
+      "--window <days>",
+      "默认统计窗口天数",
+      String(DEFAULT_DASHBOARD_WINDOW_DAYS),
+    )
+    .option(
+      "--cold <days>",
+      "默认冷知识判定天数",
+      String(DEFAULT_COLD_KNOWLEDGE_DAYS),
+    )
+    .option("--no-open", "不自动打开系统浏览器")
+    .action(async (options: DashboardCommandOptions) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const root = await resolveCompatibleVaultRoot(globalOptions);
+      const handle = await startDashboardServer(root, {
+        host: options.host,
+        port: optionalPositiveInteger(options.port) ?? DEFAULT_DASHBOARD_PORT,
+        window_days:
+          optionalPositiveInteger(options.window) ?? DEFAULT_DASHBOARD_WINDOW_DAYS,
+        cold_after_days:
+          optionalPositiveInteger(options.cold) ?? DEFAULT_COLD_KNOWLEDGE_DAYS,
+      });
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data({ url: handle.url, root, tracking: "local" });
+      if (options.open !== false) {
+        await openDashboardInBrowser(handle.url).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`无法自动打开浏览器，请手动访问 ${handle.url}：${message}\n`);
+        });
+      }
     });
 
   const compile = program

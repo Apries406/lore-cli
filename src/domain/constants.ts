@@ -1,5 +1,5 @@
 /** 当前 CLI 与采集器版本。 */
-export const LORE_VERSION = "0.3.0";
+export const LORE_VERSION = "0.4.0";
 /** 用户级 Lore 配置独立演进，不与 Vault Schema 版本绑定。 */
 export const LORE_USER_CONFIG_VERSION = 1;
 /** 支持在测试、容器和多配置环境中覆盖 Lore 用户目录与默认 Vault。 */
@@ -26,6 +26,7 @@ export const SNAPSHOT_ID_PREFIX = "snp_";
 export const COMPILE_RUN_ID_PREFIX = "run_";
 export const CONCEPT_ID_PREFIX = "con_";
 export const MIGRATION_ID_PREFIX = "mig_";
+export const QUERY_ID_PREFIX = "qry_";
 export const TEXT_ENCODING = "utf8";
 export const FRONTMATTER_DELIMITER = "---";
 /** 向上寻找 Vault 根目录时的防御性上限。 */
@@ -46,6 +47,10 @@ export const DEFAULT_RAW_QUERY_RESULT_LIMIT = 5;
 export const DEFAULT_MIN_WIKI_QUERY_SCORE = 4;
 /** Raw 摘录默认包含命中行前后的行数。 */
 export const DEFAULT_RAW_EXCERPT_CONTEXT_LINES = 1;
+
+export const DEFAULT_DASHBOARD_PORT = 4317;
+export const DEFAULT_DASHBOARD_WINDOW_DAYS = 30;
+export const DEFAULT_COLD_KNOWLEDGE_DAYS = 90;
 /** BM25 的词频饱和参数。 */
 export const BM25_TERM_SATURATION = 1.2;
 /** BM25 的文档长度归一化参数。 */

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_COLD_KNOWLEDGE_DAYS,
   DEFAULT_MAX_COMPILE_CHANGES,
   DEFAULT_MAX_CANDIDATE_PAGES,
   DEFAULT_MAX_NEW_PAGES,
@@ -60,6 +61,11 @@ export function createProfile(): Record<string, unknown> {
       max_candidate_pages: DEFAULT_MAX_CANDIDATE_PAGES,
       max_raw_evidence: DEFAULT_RAW_QUERY_RESULT_LIMIT,
       minimum_wiki_score: DEFAULT_MIN_WIKI_QUERY_SCORE,
+    },
+    usage: {
+      tracking_enabled: true,
+      store_question_text: false,
+      cold_after_days: DEFAULT_COLD_KNOWLEDGE_DAYS,
     },
     compile: {
       max_changes: DEFAULT_MAX_COMPILE_CHANGES,

@@ -300,8 +300,31 @@ describe("Lore CLI", () => {
     expect(query.status).toBe(0);
     expect(JSON.parse(query.stdout)).toMatchObject({
       data: {
+        query_id: expect.stringMatching(/^qry_/u),
+        usage_tracked: true,
         wiki_candidates: [{ path: "wiki/pages/two-layer-model.md" }],
         fallback: { used: false },
+      },
+    });
+    const usage = runCli([
+      "--json",
+      "--root",
+      vault,
+      "usage",
+      "stats",
+      "--window",
+      "30",
+    ]);
+    expect(usage.status).toBe(0);
+    expect(JSON.parse(usage.stdout)).toMatchObject({
+      data: {
+        usage: { tracked_queries: 1 },
+        pages: [
+          {
+            path: "wiki/pages/two-layer-model.md",
+            recall_count: 1,
+          },
+        ],
       },
     });
     expect(

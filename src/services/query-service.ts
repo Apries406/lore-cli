@@ -37,6 +37,7 @@ import {
   searchWiki,
   tokenizeForSearch,
 } from "./wiki-service.js";
+import { createQueryId, recordQueryUsage } from "./usage-service.js";
 
 const QUERYABLE_MEDIA_TYPES = new Set<string>([
   MediaType.Markdown,
@@ -52,6 +53,7 @@ export interface PrepareQueryOptions {
   max_wiki_results?: number;
   max_raw_results?: number;
   now?: Date;
+  track_usage?: boolean;
 }
 
 /** 读取 Wiki 页面；调用方只需提供 prepare/search 返回的受控相对路径。 */
@@ -211,7 +213,7 @@ async function searchRawEvidence(
 
 /**
  * 生成查询上下文包：始终先检索 Wiki，仅在策略要求时补充 Raw 摘录。
- * 该函数不调用模型，也不产生知识库写入。
+ * 该函数不调用模型；默认只向 `.lore/usage` 写入隐私安全的召回统计。
  */
 export async function prepareQuery(
   root: string,
@@ -251,8 +253,10 @@ export async function prepareQuery(
     shouldFallback = false;
     reason = RawFallbackReason.WikiEvidenceSufficient;
   }
-  return {
+  const packet: QueryPacket = {
     version: SCHEMA_VERSION,
+    query_id: createQueryId(),
+    usage_tracked: false,
     question: normalizedQuestion,
     created_at: (options.now ?? new Date()).toISOString(),
     wiki_revision: await getWikiRevision(root),
@@ -263,4 +267,8 @@ export async function prepareQuery(
       : [],
     fallback: { used: shouldFallback, reason },
   };
+  const usageTracked = await recordQueryUsage(root, packet, {
+    ...(options.track_usage === undefined ? {} : { track: options.track_usage }),
+  });
+  return { ...packet, usage_tracked: usageTracked };
 }

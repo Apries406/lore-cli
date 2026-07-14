@@ -44,6 +44,8 @@ export interface QueryPolicySnapshot {
 /** CLI 生成、供查询 Skill 只读消费的上下文包。 */
 export interface QueryPacket {
   version: number;
+  query_id: string;
+  usage_tracked: boolean;
   question: string;
   created_at: string;
   wiki_revision: WikiBaseRevision;

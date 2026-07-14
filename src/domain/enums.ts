@@ -22,6 +22,8 @@ export enum DirectoryName {
   Compilations = "compilations",
   Migrations = "migrations",
   SourceTransactions = "source-transactions",
+  Usage = "usage",
+  Queries = "queries",
 }
 
 /** 知识库内具有固定语义的文件名。 */
@@ -172,6 +174,11 @@ export enum RawFallbackReason {
   NoWikiCandidate = "no_wiki_candidate",
   WikiEvidenceInsufficient = "wiki_evidence_insufficient",
   WikiEvidenceSufficient = "wiki_evidence_sufficient",
+}
+
+/** 使用统计事件的来源；Dashboard 默认把 Agent 查询与人工搜索分开。 */
+export enum UsageChannel {
+  AgentQuery = "agent_query",
 }
 
 /** 页面归并策略。 */
