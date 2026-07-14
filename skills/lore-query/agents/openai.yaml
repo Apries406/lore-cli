@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lore 知识查询"
+  short_description: "基于 Wiki-first 和可追溯 Raw Evidence 回答问题"
+  default_prompt: "使用 $lore-query 从 Lore 知识库回答这个问题，并附上可追溯引用。"
