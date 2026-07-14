@@ -22,6 +22,7 @@ import {
   createChangeSetSchema,
   createConceptSchema,
   createProfile,
+  createMigrationHistory,
   createSourceSchema,
   createVaultConfig,
   createWikiIndex,
@@ -65,6 +66,7 @@ export async function initializeVault(
     [DirectoryName.Runtime],
     [DirectoryName.Runtime, DirectoryName.Runs],
     [DirectoryName.Runtime, DirectoryName.Staging],
+    [DirectoryName.Runtime, DirectoryName.Migrations],
   ];
 
   for (const segments of directories) {
@@ -88,6 +90,10 @@ export async function initializeVault(
     [
       `${DirectoryName.Schema}/${VaultFileName.AgentInstructions}`,
       createAgentInstructions(),
+    ],
+    [
+      `${DirectoryName.Schema}/${VaultFileName.MigrationHistory}`,
+      serializeYaml(createMigrationHistory()),
     ],
   ];
 

@@ -19,6 +19,7 @@ export enum DirectoryName {
   Staging = "staging",
   Backup = "backup",
   Compilations = "compilations",
+  Migrations = "migrations",
 }
 
 /** 知识库内具有固定语义的文件名。 */
@@ -42,7 +43,9 @@ export enum VaultFileName {
   CompileValidation = "validation.yaml",
   CompileDiff = "diff.patch",
   CompileLock = "compile.lock",
+  MigrationLock = "migration.lock",
   CompilationRecord = "compilation.yaml",
+  MigrationHistory = "migrations.yaml",
 }
 
 /** 原始来源类型；当前采集器只实现了本地文件。 */
@@ -222,6 +225,9 @@ export enum ErrorCode {
   InvalidRunState = "invalid_run_state",
   InvalidChangeSet = "invalid_change_set",
   CompileLockHeld = "compile_lock_held",
+  MigrationRequired = "migration_required",
+  UnsupportedVaultVersion = "unsupported_vault_version",
+  MigrationFailed = "migration_failed",
   Internal = "internal",
 }
 

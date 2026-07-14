@@ -54,6 +54,18 @@ describe("Lore CLI", () => {
     expect(initialized.status).toBe(0);
     expect(JSON.parse(initialized.stdout)).toMatchObject({ ok: true });
 
+    const migration = runCli([
+      "--json",
+      "--root",
+      vault,
+      "migrate",
+      "status",
+    ]);
+    expect(migration.status).toBe(0);
+    expect(JSON.parse(migration.stdout)).toMatchObject({
+      data: { required: false },
+    });
+
     const added = runCli([
       "--json",
       "--root",

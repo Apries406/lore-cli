@@ -24,6 +24,11 @@ import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
 import { initializeVault } from "./services/vault-service.js";
 import { auditVault } from "./services/audit-service.js";
+import {
+  applyMigration,
+  assertVaultCompatible,
+  getMigrationPlan,
+} from "./services/migration-service.js";
 import { prepareQuery, showWikiPage } from "./services/query-service.js";
 import { searchWiki } from "./services/wiki-service.js";
 import {
@@ -98,6 +103,13 @@ function outputFormat(options: GlobalOptions): OutputFormat {
 
 /** 解析显式根目录，未指定时从当前目录向上寻找。 */
 async function resolveVaultRoot(options: GlobalOptions): Promise<string> {
+  const root = await findVaultRoot(options.root ?? process.cwd());
+  await assertVaultCompatible(root);
+  return root;
+}
+
+/** 只定位 Vault，不执行版本门禁；仅供 migrate 命令使用。 */
+async function locateVaultRoot(options: GlobalOptions): Promise<string> {
   return findVaultRoot(options.root ?? process.cwd());
 }
 
@@ -123,6 +135,43 @@ function createProgram(): Command {
     .action(async (targetPath: string) => {
       const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
       reporter.initialized(await initializeVault(targetPath));
+    });
+
+  const migrate = program
+    .command("migrate")
+    .description("检查并升级旧版 Lore Vault");
+
+  migrate
+    .command("plan")
+    .description("只读展示迁移动作")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getMigrationPlan(await locateVaultRoot(globalOptions)),
+      );
+    });
+
+  migrate
+    .command("status")
+    .description("显示当前 Vault 是否需要迁移")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getMigrationPlan(await locateVaultRoot(globalOptions)),
+      );
+    });
+
+  migrate
+    .command("apply")
+    .description("备份并事务升级 Vault")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await applyMigration(await locateVaultRoot(globalOptions)),
+      );
     });
 
   const source = program

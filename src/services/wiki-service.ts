@@ -71,6 +71,14 @@ export function parseWikiPage(content: string): {
   };
 }
 
+/** 用保留后的 frontmatter 与正文重新渲染页面，供协议迁移使用。 */
+export function renderRawWikiPage(
+  frontmatter: Record<string, unknown>,
+  body: string,
+): string {
+  return `${FRONTMATTER_DELIMITER}\n${serializeYaml(frontmatter).trimEnd()}\n${FRONTMATTER_DELIMITER}\n\n${body.trim()}\n`;
+}
+
 /** 读取所有知识页面；index.md 与 log.md 不属于 Concept。 */
 export async function listWikiPages(root: string): Promise<WikiPage[]> {
   const pagesRoot = safeJoin(root, DirectoryName.Wiki, DirectoryName.Pages);

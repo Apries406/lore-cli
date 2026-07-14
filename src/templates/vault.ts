@@ -29,6 +29,7 @@ import {
   WikiPageType,
 } from "../domain/enums.js";
 import type { VaultConfig } from "../domain/models.js";
+import type { MigrationHistory } from "../domain/migration-models.js";
 
 /** 创建根配置。目录值属于 Vault 协议，不使用展示文案。 */
 export function createVaultConfig(name: string): VaultConfig {
@@ -76,6 +77,11 @@ export function createProfile(): Record<string, unknown> {
       stale_run_after_hours: DEFAULT_RUN_STALE_AFTER_HOURS,
     },
   };
+}
+
+/** 创建空迁移历史；后续升级只追加成功记录。 */
+export function createMigrationHistory(): MigrationHistory {
+  return { version: SCHEMA_VERSION, migrations: [] };
 }
 
 /** 创建 OKF Concept frontmatter 的机器校验契约。 */

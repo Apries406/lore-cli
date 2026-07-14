@@ -594,6 +594,18 @@ export async function readCompileDiff(root: string, runId: string): Promise<stri
 
 /** 获取独占应用锁，防止两个进程同时修改 Wiki。 */
 async function withCompileLock<T>(root: string, action: () => Promise<T>): Promise<T> {
+  const migrationLock = safeJoin(
+    root,
+    DirectoryName.Runtime,
+    VaultFileName.MigrationLock,
+  );
+  if (await pathExists(migrationLock)) {
+    throw new LoreError(
+      ErrorCode.MigrationFailed,
+      "Vault 正在迁移，不能同时应用知识编译",
+      ExitCode.Conflict,
+    );
+  }
   const lockPath = safeJoin(root, DirectoryName.Runtime, VaultFileName.CompileLock);
   let handle;
   try {

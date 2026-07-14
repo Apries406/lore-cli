@@ -466,6 +466,7 @@ export async function validateVault(root: string): Promise<ValidationReport> {
     `${DirectoryName.Schema}/${VaultFileName.ConceptSchema}`,
     `${DirectoryName.Schema}/${VaultFileName.SourceSchema}`,
     `${DirectoryName.Schema}/${VaultFileName.ChangeSetSchema}`,
+    `${DirectoryName.Schema}/${VaultFileName.MigrationHistory}`,
   ];
 
   for (const relativePath of requiredPaths) {
