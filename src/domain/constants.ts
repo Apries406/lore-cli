@@ -44,6 +44,12 @@ export const QUERY_DESCRIPTION_WEIGHT = 1.5;
 export const QUERY_EXACT_TITLE_BONUS = 10;
 export const RAW_QUERY_TERM_WEIGHT = 2;
 export const RAW_QUERY_TITLE_WEIGHT = 3;
+/** Active Source 超过该天数没有新 Snapshot 时给出陈旧警告。 */
+export const DEFAULT_SOURCE_STALE_AFTER_DAYS = 90;
+/** 未完成编译任务超过该小时数时视为遗留运行状态。 */
+export const DEFAULT_RUN_STALE_AFTER_HOURS = 24;
+export const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+export const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 /** Wiki 页面相对路径必须位于 pages/ 且使用稳定英文 slug。 */
 export const WIKI_PAGE_PATH_PATTERN = "^wiki/pages/[a-z0-9][a-z0-9-]*\\.md$";
 /** 第一版 Evidence 使用不可变 Snapshot 中的 1-based 行区间。 */

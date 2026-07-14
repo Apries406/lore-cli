@@ -1,4 +1,5 @@
 import type {
+  AuditDiagnosticCode,
   DiagnosticCode,
   SourceKind,
   SourceStatus,
@@ -84,4 +85,32 @@ export interface VaultStatus {
     errors: number;
     warnings: number;
   };
+}
+
+/** 一条长期健康审计诊断。 */
+export interface AuditDiagnostic {
+  severity: ValidationSeverity;
+  code: AuditDiagnosticCode;
+  path: string;
+  message: string;
+}
+
+/** Raw、Wiki 和运行状态的覆盖率统计。 */
+export interface AuditCoverage {
+  sources: number;
+  snapshots: number;
+  latest_snapshots_compiled: number;
+  wiki_pages: number;
+  pages_with_evidence: number;
+  incomplete_compile_runs: number;
+}
+
+/** `lore audit` 的完整结果。 */
+export interface AuditReport {
+  healthy: boolean;
+  errors: number;
+  warnings: number;
+  validation: ValidationReport;
+  coverage: AuditCoverage;
+  diagnostics: AuditDiagnostic[];
 }

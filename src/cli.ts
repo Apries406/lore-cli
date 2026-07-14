@@ -23,6 +23,7 @@ import {
 import { getVaultStatus } from "./services/status-service.js";
 import { validateVault } from "./services/validation-service.js";
 import { initializeVault } from "./services/vault-service.js";
+import { auditVault } from "./services/audit-service.js";
 import { prepareQuery, showWikiPage } from "./services/query-service.js";
 import { searchWiki } from "./services/wiki-service.js";
 import {
@@ -375,6 +376,19 @@ function createProgram(): Command {
       const report = await validateVault(await resolveVaultRoot(globalOptions));
       reporter.validation(report);
       if (!report.valid) {
+        process.exitCode = ExitCode.ValidationFailed;
+      }
+    });
+
+  program
+    .command("audit")
+    .description("审计 Evidence、重复知识、来源覆盖率和遗留任务")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const report = await auditVault(await resolveVaultRoot(globalOptions));
+      reporter.audit(report);
+      if (!report.healthy) {
         process.exitCode = ExitCode.ValidationFailed;
       }
     });

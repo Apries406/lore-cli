@@ -68,6 +68,17 @@ describe("Lore CLI", () => {
     }>;
     expect(addedEnvelope.data.source.source_id).toMatch(/^src_/u);
 
+    const audit = runCli(["--json", "--root", vault, "audit"]);
+    expect(audit.status).toBe(0);
+    expect(JSON.parse(audit.stdout)).toMatchObject({
+      ok: true,
+      data: {
+        healthy: true,
+        warnings: 1,
+        coverage: { latest_snapshots_compiled: 0 },
+      },
+    });
+
     const status = runCli(["--json", "--root", vault, "status"]);
     expect(status.status).toBe(0);
     expect(JSON.parse(status.stdout)).toMatchObject({

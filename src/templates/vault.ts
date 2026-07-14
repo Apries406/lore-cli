@@ -4,6 +4,8 @@ import {
   DEFAULT_MAX_NEW_PAGES,
   DEFAULT_MIN_WIKI_QUERY_SCORE,
   DEFAULT_RAW_QUERY_RESULT_LIMIT,
+  DEFAULT_RUN_STALE_AFTER_HOURS,
+  DEFAULT_SOURCE_STALE_AFTER_DAYS,
   LINE_RANGE_LOCATOR_PATTERN,
   OKF_VERSION,
   SCHEMA_VERSION,
@@ -68,6 +70,10 @@ export function createProfile(): Record<string, unknown> {
       require_evidence_for_active_pages: true,
       check_broken_links: true,
       check_orphan_pages: true,
+      check_duplicate_pages: true,
+      check_uncompiled_latest_snapshots: true,
+      stale_source_after_days: DEFAULT_SOURCE_STALE_AFTER_DAYS,
+      stale_run_after_hours: DEFAULT_RUN_STALE_AFTER_HOURS,
     },
   };
 }

@@ -183,6 +183,24 @@ export enum DiagnosticCode {
   BrokenLink = "broken_link",
 }
 
+/** `lore audit` 使用的长期健康诊断码。 */
+export enum AuditDiagnosticCode {
+  MissingEvidence = "missing_evidence",
+  EvidenceSourceMissing = "evidence_source_missing",
+  EvidenceSnapshotMissing = "evidence_snapshot_missing",
+  EvidenceLocatorInvalid = "evidence_locator_invalid",
+  EvidenceChecksumMismatch = "evidence_checksum_mismatch",
+  EvidenceNotLatest = "evidence_not_latest",
+  DuplicateConceptId = "duplicate_concept_id",
+  DuplicateMergeKey = "duplicate_merge_key",
+  DuplicateTitle = "duplicate_title",
+  DuplicatePageContent = "duplicate_page_content",
+  OrphanPage = "orphan_page",
+  UncompiledLatestSnapshot = "uncompiled_latest_snapshot",
+  StaleSource = "stale_source",
+  IncompleteCompileRun = "incomplete_compile_run",
+}
+
 /** CLI 输出模式。 */
 export enum OutputFormat {
   Human = "human",

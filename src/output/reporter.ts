@@ -1,6 +1,7 @@
 import { OutputFormat, ValidationSeverity } from "../domain/enums.js";
 import type {
   AddSourceResult,
+  AuditReport,
   SourceMetadata,
   ValidationReport,
   VaultStatus,
@@ -86,6 +87,28 @@ export class Reporter {
     const state = report.valid ? "有效" : "无效";
     process.stdout.write(
       `知识库${state}：${report.errors} 个错误，${report.warnings} 个警告。\n`,
+    );
+    for (const item of report.diagnostics) {
+      const severity =
+        item.severity === ValidationSeverity.Error ? "错误" : "警告";
+      process.stdout.write(
+        `${severity} ${item.code} ${item.path}：${item.message}\n`,
+      );
+    }
+  }
+
+  /** 输出长期健康审计与覆盖率。 */
+  public audit(report: AuditReport): void {
+    if (this.format === OutputFormat.Json) {
+      this.data(report);
+      return;
+    }
+
+    process.stdout.write(
+      `长期健康：${report.healthy ? "健康" : "需要处理"}，${report.errors} 个错误，${report.warnings} 个警告。\n`,
+    );
+    process.stdout.write(
+      `覆盖率：${report.coverage.sources} 个来源，${report.coverage.snapshots} 个 Snapshot，${report.coverage.latest_snapshots_compiled} 个 latest 已编译；${report.coverage.wiki_pages} 个页面中 ${report.coverage.pages_with_evidence} 个具有 Evidence。\n`,
     );
     for (const item of report.diagnostics) {
       const severity =
