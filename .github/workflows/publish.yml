@@ -1,0 +1,52 @@
+name: 发布 npm 包
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 发布到 npmjs.org
+    if: github.repository == 'Apries406/lore-cli'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出 Release 代码
+        uses: actions/checkout@v6
+
+      - name: 配置 Node.js 与 npmjs.org
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: 安装支持 Trusted Publishing 的 npm
+        run: npm install --global npm@11
+
+      - name: 安装依赖
+        run: npm ci --ignore-scripts
+
+      - name: 校验 Release 标签与包版本
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_TAG="v${PACKAGE_VERSION}"
+          if [[ "${RELEASE_TAG}" != "${EXPECTED_TAG}" ]]; then
+            echo "::error::Release 标签 ${RELEASE_TAG} 与 package.json 版本 ${PACKAGE_VERSION} 不一致，应为 ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: 使用 OIDC 发布公共包
+        run: npm publish --access public
