@@ -81,6 +81,17 @@ import {
   openDashboardInBrowser,
   startDashboardServer,
 } from "./services/dashboard-server.js";
+import {
+  addVaultRemote,
+  cloneVault,
+  getVaultSyncStatus,
+  listVaultRemotes,
+  syncVault,
+} from "./services/git-sync-service.js";
+import {
+  bindSource,
+  listSourceBindings,
+} from "./services/source-binding-service.js";
 
 interface GlobalOptions {
   root?: string;
@@ -281,7 +292,7 @@ function createProgram(): Command {
   program
     .command("init")
     .description("初始化默认 Vault 并为 Agent 安装 Lore Skills")
-    .argument("[path]", "目标目录；默认使用用户级 Lore 数据目录")
+    .argument("[path]", "目标目录；默认 ~/.lore")
     .option(
       "--agent <agent>",
       `安装目标，可重复：${SUPPORTED_AGENT_KINDS.join("、")}`,
@@ -434,6 +445,102 @@ function createProgram(): Command {
       await assertVaultCompatible(root);
       const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
       reporter.data(await setDefaultVault(root));
+    });
+
+  vault
+    .command("clone")
+    .description("从 Git 远端克隆 Vault 并设为默认知识库")
+    .argument("<url>", "GitHub、GitLab、Gitea 或自建 Git 地址")
+    .argument("[path]", "目标目录；默认 ~/.lore")
+    .option("--remote <name>", "远端名称", "origin")
+    .option("--branch <name>", "同步分支", "main")
+    .option("--no-set-default", "不将克隆的 Vault 设为用户默认值")
+    .action(async (
+      url: string,
+      targetPath: string | undefined,
+      options: { remote: string; branch: string; setDefault?: boolean },
+    ) => {
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      const cloned = await cloneVault(url, targetPath ?? getDefaultNewVaultPath(), {
+        remote: options.remote,
+        branch: options.branch,
+      });
+      reporter.data({
+        ...cloned,
+        ...(options.setDefault === false
+          ? {}
+          : { default_vault: (await setDefaultVault(cloned.root)).default_vault }),
+      });
+    });
+
+  const vaultRemote = vault
+    .command("remote")
+    .description("管理 Vault 的 Git 远端");
+
+  vaultRemote
+    .command("add")
+    .description("添加 Git 远端；凭证由系统 Git 管理")
+    .argument("<name>", "远端名称，例如 origin")
+    .argument("<url>", "SSH、HTTPS 或本地 Git 地址")
+    .option("--branch <name>", "同步分支", "main")
+    .action(async (name: string, url: string, options: { branch: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await addVaultRemote(
+          await resolveCompatibleVaultRoot(globalOptions),
+          name,
+          url,
+          options.branch,
+        ),
+      );
+    });
+
+  vaultRemote
+    .command("list")
+    .description("列出已配置的 Git 远端")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await listVaultRemotes(await resolveCompatibleVaultRoot(globalOptions)),
+      );
+    });
+
+  vault
+    .command("status")
+    .description("显示 Git 工作区和 ahead/behind 状态，不访问网络")
+    .option("--remote <name>", "远端名称", "origin")
+    .option("--branch <name>", "同步分支", "main")
+    .action(async (options: { remote: string; branch: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await getVaultSyncStatus(
+          await resolveCompatibleVaultRoot(globalOptions),
+          options,
+        ),
+      );
+    });
+
+  vault
+    .command("sync")
+    .description("校验、提交并以 fast-forward 策略同步 Vault")
+    .option("--remote <name>", "远端名称", "origin")
+    .option("--branch <name>", "同步分支", "main")
+    .option("--allow-sensitive", "确认并允许推送检测到的敏感凭证")
+    .action(async (
+      options: { remote: string; branch: string; allowSensitive?: boolean },
+    ) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await syncVault(await resolveCompatibleVaultRoot(globalOptions), {
+          remote: options.remote,
+          branch: options.branch,
+          allow_sensitive: options.allowSensitive === true,
+        }),
+      );
     });
 
   const migrate = program
@@ -819,6 +926,34 @@ function createProgram(): Command {
           new Date(),
           options.allowSensitive === true,
         ),
+      );
+    });
+
+  source
+    .command("bind")
+    .description("把可迁移 Source 绑定到当前设备的文件或目录")
+    .argument("<source-id>", "稳定的来源 ID")
+    .argument("<local-path>", "当前设备上的真实路径")
+    .action(async (sourceId: string, localPath: string) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await bindSource(
+          await resolveCompatibleVaultRoot(globalOptions),
+          sourceId,
+          localPath,
+        ),
+      );
+    });
+
+  source
+    .command("bindings")
+    .description("列出当前设备的 Source 路径绑定")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await listSourceBindings(await resolveCompatibleVaultRoot(globalOptions)),
       );
     });
 

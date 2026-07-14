@@ -25,6 +25,10 @@ import {
   syncSource,
   updateSourceLifecycle,
 } from "../src/services/source-service.js";
+import {
+  bindSource,
+  listSourceBindings,
+} from "../src/services/source-binding-service.js";
 import { initializeVault } from "../src/services/vault-service.js";
 
 describe("长期使用的 Source Adapter 与生命周期", () => {
@@ -137,6 +141,28 @@ describe("长期使用的 Source Adapter 与生命周期", () => {
     expect(content).toContain("## nested/code.ts");
     expect(content).not.toContain("SECRET=hidden");
     expect(content).not.toContain("node_modules");
+  });
+
+  it("通过本机绑定在迁移后的目录继续同步同一个 Source", async () => {
+    const root = await createVault();
+    const original = await temporaryDirectory("lore-binding-original-");
+    await writeFile(path.join(original, "notes.md"), "第一台机器\n", "utf8");
+    const added = await addSource(root, original, { kind: SourceKind.Directory });
+    const relocated = await temporaryDirectory("lore-binding-relocated-");
+    await writeFile(path.join(relocated, "notes.md"), "第二台机器\n", "utf8");
+
+    const binding = await bindSource(root, added.source.source_id, relocated);
+    expect(binding).toMatchObject({
+      source_id: added.source.source_id,
+      input: await import("node:fs/promises").then(({ realpath }) => realpath(relocated)),
+    });
+    expect(await listSourceBindings(root)).toContainEqual(binding);
+
+    const synced = await syncSource(root, added.source.source_id);
+    expect(synced.source.source_id).toBe(added.source.source_id);
+    expect(synced.source.canonical_uri).toBe(added.source.canonical_uri);
+    expect((await readSourceSnapshot(root, added.source.source_id)).content.toString())
+      .toContain("第二台机器");
   });
 
   it("采集并同步 HTTP 页面，每次内容变化生成新 Snapshot", async () => {

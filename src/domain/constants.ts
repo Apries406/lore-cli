@@ -1,5 +1,5 @@
 /** 当前 CLI 与采集器版本。 */
-export const LORE_VERSION = "0.4.0";
+export const LORE_VERSION = "0.5.0";
 /** 用户级 Lore 配置独立演进，不与 Vault Schema 版本绑定。 */
 export const LORE_USER_CONFIG_VERSION = 1;
 /** 支持在测试、容器和多配置环境中覆盖 Lore 用户目录与默认 Vault。 */

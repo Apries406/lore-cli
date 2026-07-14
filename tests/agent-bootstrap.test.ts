@@ -15,6 +15,7 @@ import {
 } from "../src/services/agent-service.js";
 import { initializeAgentFirst } from "../src/services/bootstrap-service.js";
 import {
+  getDefaultNewVaultPath,
   getDefaultVault,
   getLoreConfigPath,
   readUserConfig,
@@ -37,6 +38,23 @@ describe("Agent-first 初始化", () => {
     temporaryRoots.push(root);
     return root;
   }
+
+  it("新安装默认把个人 Vault 放在 ~/.lore", () => {
+    expect(
+      getDefaultNewVaultPath({
+        home: "/Users/alice",
+        env: {},
+        platform: "darwin",
+      }),
+    ).toBe(path.resolve("/Users/alice/.lore"));
+    expect(
+      getDefaultNewVaultPath({
+        home: "/home/alice",
+        env: {},
+        platform: "linux",
+      }),
+    ).toBe(path.resolve("/home/alice/.lore"));
+  });
 
   it("检测 Agent、自动补齐缺失 Skills 并配置默认 Vault", async () => {
     const home = await temporaryDirectory("lore-agent-home-");

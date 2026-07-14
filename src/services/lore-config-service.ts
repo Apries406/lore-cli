@@ -7,10 +7,8 @@ import {
   LORE_CONFIG_FILE_NAME,
   LORE_HOME_ENVIRONMENT_VARIABLE,
   LORE_ROOT_ENVIRONMENT_VARIABLE,
-  LOCAL_APP_DATA_ENVIRONMENT_VARIABLE,
   LORE_USER_CONFIG_VERSION,
   XDG_CONFIG_HOME_ENVIRONMENT_VARIABLE,
-  XDG_DATA_HOME_ENVIRONMENT_VARIABLE,
 } from "../domain/constants.js";
 import { ErrorCode, ExitCode, VaultFileName } from "../domain/enums.js";
 import type { LoreUserConfig } from "../domain/agent-models.js";
@@ -55,30 +53,11 @@ export function getDefaultNewVaultPath(
 ): string {
   const env = options.env ?? process.env;
   const home = options.home ?? os.homedir();
-  const platform = options.platform ?? process.platform;
   const explicitHome = env[LORE_HOME_ENVIRONMENT_VARIABLE];
   if (explicitHome) {
     return path.resolve(explicitHome, DEFAULT_VAULT_DIRECTORY_NAME);
   }
-  const xdgDataHome = env[XDG_DATA_HOME_ENVIRONMENT_VARIABLE];
-  if (xdgDataHome) {
-    return path.resolve(
-      xdgDataHome,
-      LORE_CONFIG_DIRECTORY_NAME,
-      DEFAULT_VAULT_DIRECTORY_NAME,
-    );
-  }
-  const localAppData = env[LOCAL_APP_DATA_ENVIRONMENT_VARIABLE];
-  if (platform === "win32" && localAppData) {
-    return path.resolve(localAppData, "Lore", DEFAULT_VAULT_DIRECTORY_NAME);
-  }
-  return path.resolve(
-    home,
-    ".local",
-    "share",
-    LORE_CONFIG_DIRECTORY_NAME,
-    DEFAULT_VAULT_DIRECTORY_NAME,
-  );
+  return path.resolve(home, ".lore");
 }
 
 /** 对磁盘配置执行运行时校验，避免类型声明掩盖损坏文件。 */

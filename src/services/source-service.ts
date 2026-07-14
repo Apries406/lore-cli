@@ -63,6 +63,7 @@ import {
   restorePreparedTransaction,
   updateTransactionStatus,
 } from "./mutation-service.js";
+import { getSourceBinding } from "./source-binding-service.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -223,7 +224,7 @@ function isProbablyText(content: Buffer): boolean {
 }
 
 /** 只匹配高置信度凭证格式，避免用宽泛 `token=` 规则阻塞正常代码。 */
-function detectSensitiveContent(content: Buffer): SensitiveContentKind[] {
+export function detectSensitiveContent(content: Buffer): SensitiveContentKind[] {
   const text = content.toString(TEXT_ENCODING);
   const detected = new Set<SensitiveContentKind>();
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u.test(text)) {
@@ -239,6 +240,23 @@ function detectSensitiveContent(content: Buffer): SensitiveContentKind[] {
     detected.add(SensitiveContentKind.OpenAiKey);
   }
   return [...detected];
+}
+
+/** 对任意待持久化文本执行统一的高置信度凭证门禁。 */
+export function assertNoSensitiveContent(
+  content: Buffer,
+  label: string,
+  allowSensitive = false,
+): void {
+  const sensitiveContent = detectSensitiveContent(content);
+  if (sensitiveContent.length > 0 && !allowSensitive) {
+    throw new LoreError(
+      ErrorCode.SensitiveContentDetected,
+      `${label} 疑似包含敏感凭证（${sensitiveContent.join("、")}）；确认安全后使用 --allow-sensitive`,
+      ExitCode.InvalidArgument,
+      { kinds: sensitiveContent },
+    );
+  }
 }
 
 /** 获取真实目录路径，同时拒绝普通文件和不存在的路径。 */
@@ -700,15 +718,11 @@ async function persistCollection(
   collected: CollectedSource,
   options: AddSourceOptions,
 ): Promise<AddSourceResult> {
-  const sensitiveContent = detectSensitiveContent(collected.content);
-  if (sensitiveContent.length > 0 && options.allow_sensitive !== true) {
-    throw new LoreError(
-      ErrorCode.SensitiveContentDetected,
-      `采集内容疑似包含敏感凭证（${sensitiveContent.join("、")}）；确认安全后使用 --allow-sensitive`,
-      ExitCode.InvalidArgument,
-      { kinds: sensitiveContent },
-    );
-  }
+  assertNoSensitiveContent(
+    collected.content,
+    "采集内容",
+    options.allow_sensitive === true,
+  );
   const sourceId = createSourceId(collected.kind, collected.canonical_uri);
   const snapshotId = createSnapshotId(collected.content);
   const capturedAt = (options.now ?? new Date()).toISOString();
@@ -943,6 +957,13 @@ export async function syncSource(
     );
   }
   let input = source.canonical_uri;
+  const binding =
+    source.kind === SourceKind.File ||
+    source.kind === SourceKind.Directory ||
+    source.kind === SourceKind.GitRepository ||
+    source.kind === SourceKind.GitDiff
+      ? await getSourceBinding(root, sourceId)
+      : undefined;
   let revision: string | undefined;
   if (
     source.kind === SourceKind.File ||
@@ -974,6 +995,9 @@ export async function syncSource(
     }
     input = decodeURIComponent(documentId);
   }
+  if (binding) {
+    input = binding.input;
+  }
   const options: AddSourceOptions = {
     kind: source.kind,
     title: source.title,
@@ -995,6 +1019,13 @@ export async function syncSource(
     };
   } else {
     collected = await collectInput(root, input, options);
+    if (binding) {
+      collected = {
+        ...collected,
+        canonical_uri: source.canonical_uri,
+        title: source.title,
+      };
+    }
   }
 
   const lock = await acquireMutationLock(

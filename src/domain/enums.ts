@@ -52,6 +52,7 @@ export enum VaultFileName {
   TransactionJournal = "transaction.yaml",
   CompilationRecord = "compilation.yaml",
   MigrationHistory = "migrations.yaml",
+  DeviceBindings = "device-bindings.yaml",
 }
 
 /** 原始来源类型；尚未实现的类型仍保留为可演进协议值。 */
@@ -306,6 +307,7 @@ export enum MutationOperation {
   CompileApply = "compile_apply",
   Migration = "migration",
   SourceUpdate = "source_update",
+  VaultSync = "vault_sync",
 }
 
 /** 可恢复事务日志状态。 */

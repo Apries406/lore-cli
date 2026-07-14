@@ -29,7 +29,12 @@ describe("Lore CLI", () => {
   afterEach(async () => {
     await Promise.all(
       temporaryRoots.splice(0).map((targetPath) =>
-        rm(targetPath, { recursive: true, force: true }),
+        rm(targetPath, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 50,
+        }),
       ),
     );
   });
@@ -165,6 +170,62 @@ describe("Lore CLI", () => {
       data: { valid: true, errors: 0 },
     });
   }, CLI_WORKFLOW_TIMEOUT_MILLISECONDS);
+
+  it("通过 CLI 配置远端、同步并克隆 Vault", async () => {
+    const vault = await temporaryDirectory("lore-cli-sync-vault-");
+    const remote = await temporaryDirectory("lore-cli-sync-remote-");
+    expect(spawnSync("git", ["-C", remote, "init", "--bare", "--initial-branch=main"]).status)
+      .toBe(0);
+    expect(runCli(["--json", "init", vault, "--no-agent-install"]).status).toBe(0);
+    const remoteAdded = runCli([
+      "--json",
+      "--root",
+      vault,
+      "vault",
+      "remote",
+      "add",
+      "origin",
+      remote,
+    ]);
+    expect(remoteAdded.status).toBe(0);
+    expect(JSON.parse(remoteAdded.stdout)).toMatchObject({
+      data: { remote: "origin", branch: "main" },
+    });
+    expect(spawnSync("git", ["-C", vault, "config", "user.name", "Lore Test"]).status)
+      .toBe(0);
+    expect(
+      spawnSync("git", ["-C", vault, "config", "user.email", "lore@example.com"])
+        .status,
+    ).toBe(0);
+
+    const synced = runCli(["--json", "--root", vault, "vault", "sync"]);
+    expect(synced.status).toBe(0);
+    expect(JSON.parse(synced.stdout)).toMatchObject({
+      data: { action: "pushed", ahead: 0, behind: 0 },
+    });
+    expect(
+      JSON.parse(
+        runCli(["--json", "--root", vault, "vault", "status"]).stdout,
+      ),
+    ).toMatchObject({ data: { initialized: true, remote: "origin" } });
+
+    const parent = await temporaryDirectory("lore-cli-clone-parent-");
+    const cloned = path.join(parent, "vault");
+    const clonedResult = runCli([
+      "--json",
+      "vault",
+      "clone",
+      remote,
+      cloned,
+      "--no-set-default",
+    ]);
+    expect(clonedResult.status).toBe(0);
+    expect(JSON.parse(clonedResult.stdout)).toMatchObject({
+      data: { root: cloned, remote: "origin", branch: "main" },
+    });
+    await expect(readFile(path.join(cloned, "lore.yaml"), "utf8"))
+      .resolves.toContain("version:");
+  }, 30_000);
 
   it("通过 CLI 完成知识编译、审阅、应用和回滚", async () => {
     const vault = await temporaryDirectory("lore-cli-compile-vault-");
