@@ -1,6 +1,6 @@
 {
   "name": "@apries/lore",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "面向 Agent 的本地优先知识编译器。",
   "type": "module",
   "bin": {

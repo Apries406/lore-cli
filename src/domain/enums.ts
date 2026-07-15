@@ -24,6 +24,7 @@ export enum DirectoryName {
   SourceTransactions = "source-transactions",
   Usage = "usage",
   Queries = "queries",
+  Inbox = "inbox",
 }
 
 /** 知识库内具有固定语义的文件名。 */
@@ -53,6 +54,8 @@ export enum VaultFileName {
   CompilationRecord = "compilation.yaml",
   MigrationHistory = "migrations.yaml",
   DeviceBindings = "device-bindings.yaml",
+  CapturePolicy = "capture-policy.yaml",
+  CaptureCandidate = "candidate.yaml",
 }
 
 /** 原始来源类型；尚未实现的类型仍保留为可演进协议值。 */
@@ -91,6 +94,29 @@ export enum SensitiveContentKind {
   AwsAccessKey = "aws_access_key",
   GithubToken = "github_token",
   OpenAiKey = "openai_key",
+}
+
+/** 日常知识采集的运行模式。 */
+export enum CaptureMode {
+  Off = "off",
+  Assisted = "assisted",
+  Automatic = "automatic",
+}
+
+/** Capture Policy 对候选知识的处置。 */
+export enum CaptureAction {
+  Include = "include",
+  Exclude = "exclude",
+  Ask = "ask",
+}
+
+/** Knowledge Inbox 中候选知识的生命周期。 */
+export enum CaptureCandidateStatus {
+  Pending = "pending",
+  NeedsConfirmation = "needs_confirmation",
+  Accepted = "accepted",
+  Rejected = "rejected",
+  Completed = "completed",
 }
 
 /** Lore Profile 约束的 Wiki 页面类型。OKF 读取端仍应宽容未知类型。 */
@@ -209,6 +235,7 @@ export enum DiagnosticCode {
   InvalidSource = "invalid_source",
   InvalidSnapshot = "invalid_snapshot",
   InvalidLatestPointer = "invalid_latest_pointer",
+  InvalidCapturePolicy = "invalid_capture_policy",
   IdentityMismatch = "identity_mismatch",
   MissingSnapshotContent = "missing_snapshot_content",
   SnapshotChecksumMismatch = "snapshot_checksum_mismatch",
@@ -272,6 +299,7 @@ export enum ErrorCode {
   VaultAlreadyExists = "vault_already_exists",
   PathEscapesVault = "path_escapes_vault",
   SourceNotFound = "source_not_found",
+  CaptureCandidateNotFound = "capture_candidate_not_found",
   UnsupportedSourceKind = "unsupported_source_kind",
   ValidationFailed = "validation_failed",
   Conflict = "conflict",
@@ -308,6 +336,7 @@ export enum MutationOperation {
   Migration = "migration",
   SourceUpdate = "source_update",
   VaultSync = "vault_sync",
+  CaptureUpdate = "capture_update",
 }
 
 /** 可恢复事务日志状态。 */

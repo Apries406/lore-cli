@@ -26,6 +26,7 @@ import {
 } from "../infrastructure/filesystem.js";
 import { walkFiles } from "../infrastructure/walk.js";
 import { createSnapshotId, sha256 } from "../infrastructure/hash.js";
+import { readCapturePolicy } from "./capture-policy-service.js";
 
 interface Validators {
   concept: ValidateFunction;
@@ -501,6 +502,26 @@ export async function validateVault(root: string): Promise<ValidationReport> {
   if (validators) {
     await validateWiki(root, validators, diagnostics);
     await validateSources(root, validators, diagnostics);
+  }
+
+  const capturePolicyPath = safeJoin(
+    root,
+    DirectoryName.Schema,
+    VaultFileName.CapturePolicy,
+  );
+  if (await pathExists(capturePolicyPath)) {
+    try {
+      await readCapturePolicy(root);
+    } catch (error) {
+      diagnostics.push(
+        diagnostic(
+          ValidationSeverity.Error,
+          DiagnosticCode.InvalidCapturePolicy,
+          `${DirectoryName.Schema}/${VaultFileName.CapturePolicy}`,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
   }
 
   diagnostics.sort((left, right) => {

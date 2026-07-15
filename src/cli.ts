@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { Command, InvalidArgumentError, Option } from "commander";
 import type { ChangeSet } from "./domain/compile-models.js";
+import type { CaptureCandidateDraft, CapturePolicy } from "./domain/capture-models.js";
 import {
   DEFAULT_COLD_KNOWLEDGE_DAYS,
   DEFAULT_DASHBOARD_PORT,
@@ -13,6 +14,7 @@ import {
 } from "./domain/constants.js";
 import {
   AgentKind,
+  CaptureCandidateStatus,
   ExitCode,
   OutputFormat,
   RawFallbackMode,
@@ -92,6 +94,21 @@ import {
   bindSource,
   listSourceBindings,
 } from "./services/source-binding-service.js";
+import {
+  applyCapturePolicy,
+  assertCapturePolicy,
+  capturePolicyRevision,
+  readCapturePolicy,
+} from "./services/capture-policy-service.js";
+import {
+  acceptInboxCandidate,
+  completeInboxCandidate,
+  listInboxCandidates,
+  proposeCaptureCandidate,
+  rejectInboxCandidate,
+  showInboxCandidate,
+} from "./services/capture-inbox-service.js";
+import { checkCaptureTask } from "./services/capture-service.js";
 
 interface GlobalOptions {
   root?: string;
@@ -420,6 +437,166 @@ function createProgram(): Command {
           agents,
           customTargets,
           options.force === true,
+        ),
+      );
+    });
+
+  const capture = program
+    .command("capture")
+    .description("检查任务产物并管理日常知识采集策略");
+
+  capture
+    .command("status")
+    .description("显示 Capture Policy 与 Knowledge Inbox 汇总")
+    .action(async () => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const root = await resolveCompatibleVaultRoot(globalOptions);
+      const policy = await readCapturePolicy(root);
+      const candidates = await listInboxCandidates(root);
+      reporter.data({
+        root,
+        policy,
+        policy_sha256: capturePolicyRevision(policy),
+        inbox: Object.fromEntries(
+          Object.values(CaptureCandidateStatus).map((status) => [
+            status,
+            candidates.filter((candidate) => candidate.status === status).length,
+          ]),
+        ),
+      });
+    });
+
+  capture
+    .command("check")
+    .description("生成安全的任务结束检查包，不直接沉淀知识")
+    .argument("[repository]", "Git 仓库路径", process.cwd())
+    .option("--summary <text>", "本次任务的自然语言摘要")
+    .action(async (repository: string, options: { summary?: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await checkCaptureTask(
+          await resolveCompatibleVaultRoot(globalOptions),
+          repository,
+          options.summary ? { summary: options.summary } : {},
+        ),
+      );
+    });
+
+  capture
+    .command("propose")
+    .description("将 Agent 提炼的候选知识按 Policy 放入 Inbox")
+    .requiredOption("--file <path>", "Capture Candidate YAML 文件")
+    .action(async (options: { file: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const draft = parseYaml<CaptureCandidateDraft>(await readFile(options.file, "utf8"));
+      reporter.data(
+        await proposeCaptureCandidate(
+          await resolveCompatibleVaultRoot(globalOptions),
+          draft,
+        ),
+      );
+    });
+
+  const capturePolicy = capture.command("policy").description("查看、校验和应用采集策略");
+
+  capturePolicy.command("show").description("显示当前策略及修订哈希").action(async () => {
+    const globalOptions = program.opts<GlobalOptions>();
+    const reporter = new Reporter(outputFormat(globalOptions));
+    const policy = await readCapturePolicy(await resolveCompatibleVaultRoot(globalOptions));
+    reporter.data({ policy, sha256: capturePolicyRevision(policy) });
+  });
+
+  capturePolicy
+    .command("validate")
+    .description("校验策略文件，不修改 Vault")
+    .requiredOption("--file <path>", "Capture Policy YAML 文件")
+    .action(async (options: { file: string }) => {
+      const reporter = new Reporter(outputFormat(program.opts<GlobalOptions>()));
+      const policy = parseYaml<unknown>(await readFile(options.file, "utf8"));
+      assertCapturePolicy(policy);
+      reporter.data({ valid: true, policy, sha256: capturePolicyRevision(policy) });
+    });
+
+  capturePolicy
+    .command("apply")
+    .description("应用已由用户审阅确认的策略文件")
+    .requiredOption("--file <path>", "Capture Policy YAML 文件")
+    .option("--expected-sha256 <hash>", "仅当当前策略修订匹配时应用")
+    .action(async (options: { file: string; expectedSha256?: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      const policy = parseYaml<CapturePolicy>(await readFile(options.file, "utf8"));
+      reporter.data(
+        await applyCapturePolicy(
+          await resolveCompatibleVaultRoot(globalOptions),
+          policy,
+          options.expectedSha256 ? { expected_sha256: options.expectedSha256 } : {},
+        ),
+      );
+    });
+
+  const inbox = program.command("inbox").description("审阅 Knowledge Inbox 候选知识");
+
+  inbox
+    .command("list")
+    .description("列出 Inbox 候选")
+    .addOption(new Option("--status <status>", "按状态过滤").choices(Object.values(CaptureCandidateStatus)))
+    .action(async (options: { status?: CaptureCandidateStatus }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await listInboxCandidates(
+          await resolveCompatibleVaultRoot(globalOptions),
+          options.status,
+        ),
+      );
+    });
+
+  inbox.command("show").description("显示一个 Inbox 候选").argument("<candidate-id>").action(async (candidateId: string) => {
+    const globalOptions = program.opts<GlobalOptions>();
+    const reporter = new Reporter(outputFormat(globalOptions));
+    reporter.data(await showInboxCandidate(await resolveCompatibleVaultRoot(globalOptions), candidateId));
+  });
+
+  inbox.command("accept").description("接受候选并创建 Raw Source 和 Compile Run").argument("<candidate-id>").action(async (candidateId: string) => {
+    const globalOptions = program.opts<GlobalOptions>();
+    const reporter = new Reporter(outputFormat(globalOptions));
+    reporter.data(await acceptInboxCandidate(await resolveCompatibleVaultRoot(globalOptions), candidateId));
+  });
+
+  inbox
+    .command("reject")
+    .description("拒绝候选并记录原因")
+    .argument("<candidate-id>")
+    .requiredOption("--reason <text>", "拒绝原因")
+    .action(async (candidateId: string, options: { reason: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await rejectInboxCandidate(
+          await resolveCompatibleVaultRoot(globalOptions),
+          candidateId,
+          options.reason,
+        ),
+      );
+    });
+
+  inbox
+    .command("complete")
+    .description("在对应 Compile Run 应用后完成 Inbox 候选")
+    .argument("<candidate-id>")
+    .requiredOption("--run <run-id>", "已应用的 Compile Run ID")
+    .action(async (candidateId: string, options: { run: string }) => {
+      const globalOptions = program.opts<GlobalOptions>();
+      const reporter = new Reporter(outputFormat(globalOptions));
+      reporter.data(
+        await completeInboxCandidate(
+          await resolveCompatibleVaultRoot(globalOptions),
+          candidateId,
+          options.run,
         ),
       );
     });

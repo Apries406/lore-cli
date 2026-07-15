@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lore 日常知识采集"
+  short_description: "按策略在编码任务结束时提炼稳定知识并送入 Inbox"
+  default_prompt: "使用 $lore-capture 检查这次任务中值得长期沉淀的知识，并遵守我的 Capture Policy。"

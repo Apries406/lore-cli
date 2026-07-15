@@ -32,6 +32,7 @@ import {
   GIT_IGNORE_TEMPLATE,
   LORE_IGNORE_TEMPLATE,
 } from "../templates/vault.js";
+import { createDefaultCapturePolicy } from "./capture-policy-service.js";
 
 export interface InitializeVaultResult {
   root: string;
@@ -85,6 +86,7 @@ export async function initializeVault(
     [DirectoryName.Runtime, DirectoryName.Migrations],
     [DirectoryName.Runtime, DirectoryName.Usage],
     [DirectoryName.Runtime, DirectoryName.Usage, DirectoryName.Queries],
+    [DirectoryName.Runtime, DirectoryName.Inbox],
   ];
 
   for (const segments of directories) {
@@ -112,6 +114,10 @@ export async function initializeVault(
     [
       `${DirectoryName.Schema}/${VaultFileName.MigrationHistory}`,
       serializeYaml(createMigrationHistory()),
+    ],
+    [
+      `${DirectoryName.Schema}/${VaultFileName.CapturePolicy}`,
+      serializeYaml(createDefaultCapturePolicy()),
     ],
   ];
 

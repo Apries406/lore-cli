@@ -25,12 +25,17 @@ describe("Lore Skill 安装", () => {
     temporaryRoots.push(target);
 
     await expect(listBundledSkills()).resolves.toEqual([
+      "lore-capture",
       "lore-compile",
       "lore-query",
     ]);
     const result = await installBundledSkills([], { target });
 
-    expect(result.installed).toEqual(["lore-compile", "lore-query"]);
+    expect(result.installed).toEqual([
+      "lore-capture",
+      "lore-compile",
+      "lore-query",
+    ]);
     expect(
       await readFile(path.join(target, "lore-query", "SKILL.md"), "utf8"),
     ).toContain("name: lore-query");

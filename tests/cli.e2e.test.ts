@@ -171,6 +171,72 @@ describe("Lore CLI", () => {
     });
   }, CLI_WORKFLOW_TIMEOUT_MILLISECONDS);
 
+  it("通过 CLI 执行 Capture Policy、Inbox 与接受候选工作流", async () => {
+    const vault = await temporaryDirectory("lore-cli-capture-vault-");
+    const files = await temporaryDirectory("lore-cli-capture-files-");
+    const candidatePath = path.join(files, "candidate.yaml");
+    await writeFile(
+      candidatePath,
+      [
+        "version: 1",
+        "title: 并发写入必须共享统一锁",
+        "summary: 多个知识写操作必须使用同一个 Vault 写锁。",
+        "details: 独立锁无法阻止不同写流程互相覆盖。",
+        "category: architecture_decision",
+        "confidence: 0.96",
+        "tags:",
+        "  - transaction",
+        "questions: []",
+        "origin:",
+        "  kind: task_summary",
+        "  repository: /workspace/lore",
+        "  changed_paths:",
+        "    - src/services/mutation-service.ts",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect(runCli(["--json", "init", vault, "--no-agent-install"]).status).toBe(0);
+    const status = runCli(["--json", "--root", vault, "capture", "status"]);
+    expect(status.status).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      data: { policy: { mode: "assisted" }, inbox: { pending: 0 } },
+    });
+
+    const proposed = runCli([
+      "--json",
+      "--root",
+      vault,
+      "capture",
+      "propose",
+      "--file",
+      candidatePath,
+    ]);
+    expect(proposed.status).toBe(0);
+    const candidateId = (JSON.parse(proposed.stdout) as JsonEnvelope<{
+      candidate: { candidate_id: string };
+    }>).data.candidate.candidate_id;
+    expect(candidateId).toMatch(/^cap_/u);
+
+    const accepted = runCli([
+      "--json",
+      "--root",
+      vault,
+      "inbox",
+      "accept",
+      candidateId,
+    ]);
+    expect(accepted.status).toBe(0);
+    expect(JSON.parse(accepted.stdout)).toMatchObject({
+      data: {
+        candidate: { status: "accepted" },
+        source: { source_id: expect.stringMatching(/^src_/u) },
+        run: { status: "prepared" },
+      },
+    });
+  }, CLI_WORKFLOW_TIMEOUT_MILLISECONDS);
+
   it("通过 CLI 配置远端、同步并克隆 Vault", async () => {
     const vault = await temporaryDirectory("lore-cli-sync-vault-");
     const remote = await temporaryDirectory("lore-cli-sync-remote-");
